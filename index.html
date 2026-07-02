@@ -1,0 +1,405 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>產業發展署輿情觀測器</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.3/dist/chart.umd.min.js"></script>
+<style>
+  :root {
+    --bg: #0f1420;
+    --panel: #1a2233;
+    --panel2: #202b42;
+    --text: #e8edf5;
+    --muted: #8fa0bd;
+    --accent: #4e9af1;
+    --border: #2b3a58;
+    --pos: #59a14f; --neg: #e15759; --neu: #8fa0bd;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: var(--bg); color: var(--text);
+    font-family: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
+    padding: 24px; max-width: 1400px; margin: 0 auto;
+  }
+  header { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; }
+  h1 { font-size: 22px; font-weight: 700; }
+  h1 span { color: var(--accent); }
+  .meta { color: var(--muted); font-size: 13px; }
+  button#refreshBtn {
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 9px 18px; font-size: 14px; cursor: pointer; font-weight: 600;
+  }
+  button#refreshBtn:disabled { opacity: .5; cursor: wait; }
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 14px; margin-bottom: 20px; }
+  .kpi {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px;
+  }
+  .kpi .label { color: var(--muted); font-size: 13px; margin-bottom: 6px; }
+  .kpi .value { font-size: 28px; font-weight: 700; }
+  .kpi .sub { font-size: 12px; margin-top: 4px; }
+  .up { color: var(--pos); } .down { color: var(--neg); }
+  .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; margin-bottom: 14px; }
+  .card {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
+  }
+  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--muted); }
+  .chart-wrap { position: relative; height: 320px; }
+  .chart-wrap.sm { height: 260px; }
+  .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
+  select, input[type="search"] {
+    background: var(--panel2); color: var(--text); border: 1px solid var(--border);
+    border-radius: 8px; padding: 8px 12px; font-size: 14px;
+  }
+  input[type="search"] { flex: 1; min-width: 200px; }
+  table { width: 100%; border-collapse: collapse; font-size: 14px; }
+  th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
+  th { color: var(--muted); font-weight: 600; font-size: 13px; position: sticky; top: 0; background: var(--panel); }
+  td a { color: var(--text); text-decoration: none; }
+  td a:hover { color: var(--accent); text-decoration: underline; }
+  .table-wrap { max-height: 480px; overflow-y: auto; }
+  .tag-chip {
+    display: inline-block; padding: 2px 10px; border-radius: 999px; font-size: 12px;
+    color: #fff; white-space: nowrap;
+  }
+  .sent { font-size: 12px; font-weight: 600; }
+  .sent.正面 { color: var(--pos); } .sent.負面 { color: var(--neg); } .sent.中立 { color: var(--neu); }
+  .muted { color: var(--muted); }
+  footer { color: var(--muted); font-size: 12px; margin-top: 20px; text-align: center; }
+  .tabs { display: flex; gap: 8px; margin-bottom: 18px; border-bottom: 1px solid var(--border); }
+  .tab-btn {
+    background: none; border: none; color: var(--muted); font-size: 15px; font-weight: 600;
+    padding: 10px 18px; cursor: pointer; border-bottom: 2px solid transparent; font-family: inherit;
+  }
+  .tab-btn.active { color: var(--text); border-bottom-color: var(--accent); }
+  .offset-cell { text-align: center; }
+  .offset-badge {
+    display: inline-block; min-width: 30px; padding: 3px 6px; border-radius: 6px;
+    background: var(--panel2); font-variant-numeric: tabular-nums;
+  }
+  .offset-badge.hot { background: #2c4a75; color: #cfe3ff; font-weight: 700; }
+  tr.pr-row { cursor: pointer; }
+  tr.pr-row:hover td { background: rgba(78,154,241,.06); }
+  tr.pr-detail td { background: var(--panel2); padding: 12px 16px; }
+  .pr-art { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
+  .pr-art .d { color: var(--accent); min-width: 36px; font-weight: 600; }
+  .pr-art .s { color: var(--muted); min-width: 110px; }
+  @media (max-width: 900px) { .grid, .grid2 { grid-template-columns: 1fr; } }
+</style>
+</head>
+<body>
+<header>
+  <div>
+    <h1>📡 產業發展署<span>輿情觀測器</span></h1>
+    <div class="meta" id="metaLine">載入中…</div>
+  </div>
+  <button id="refreshBtn" onclick="refresh()">🔄 立即更新資料</button>
+</header>
+
+<nav class="tabs">
+  <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 聲量總覽</button>
+  <button class="tab-btn" data-tab="pr" onclick="switchTab('pr')">📤 新聞稿擴散</button>
+</nav>
+
+<div id="tab-overview">
+<div class="kpis">
+  <div class="kpi"><div class="label">近 30 天總聲量</div><div class="value" id="kpiTotal">–</div></div>
+  <div class="kpi"><div class="label">今日新聞則數</div><div class="value" id="kpiToday">–</div></div>
+  <div class="kpi"><div class="label">近 7 天 vs 前 7 天</div><div class="value" id="kpiWeek">–</div><div class="sub" id="kpiWeekSub"></div></div>
+  <div class="kpi"><div class="label">最熱議題標籤</div><div class="value" id="kpiTopTag" style="font-size:20px">–</div></div>
+</div>
+
+<div class="grid">
+  <div class="card">
+    <h2>📈 30 天每日聲量趨勢（點圖例可隱藏/顯示標籤）</h2>
+    <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>🏷️ 標籤聲量排行（30 天）</h2>
+    <div class="chart-wrap"><canvas id="totalChart"></canvas></div>
+  </div>
+</div>
+
+<div class="grid2">
+  <div class="card">
+    <h2>😊 情緒分布（依標題關鍵詞判斷）</h2>
+    <div class="chart-wrap sm"><canvas id="sentChart"></canvas></div>
+  </div>
+  <div class="card">
+    <h2>📰 主要媒體來源 Top 12</h2>
+    <div class="chart-wrap sm"><canvas id="sourceChart"></canvas></div>
+  </div>
+</div>
+
+<div class="card">
+  <h2>🗞️ 最新新聞</h2>
+  <div class="toolbar">
+    <select id="tagFilter" onchange="renderTable()"><option value="">全部標籤</option></select>
+    <select id="sentFilter" onchange="renderTable()">
+      <option value="">全部情緒</option><option>正面</option><option>中立</option><option>負面</option>
+    </select>
+    <input type="search" id="searchBox" placeholder="搜尋標題關鍵字…" oninput="renderTable()">
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead><tr><th style="width:90px">日期</th><th style="width:110px">標籤</th><th>標題</th><th style="width:130px">來源</th><th style="width:50px">情緒</th></tr></thead>
+      <tbody id="articleBody"></tbody>
+    </table>
+  </div>
+</div>
+</div><!-- /tab-overview -->
+
+<div id="tab-pr" hidden>
+  <div class="kpis">
+    <div class="kpi"><div class="label">追蹤中新聞稿（30 天）</div><div class="value" id="prCount">–</div></div>
+    <div class="kpi"><div class="label">平均每篇被報導</div><div class="value" id="prAvg">–</div></div>
+    <div class="kpi"><div class="label">擴散最廣的新聞稿</div><div class="value" id="prTop" style="font-size:15px;line-height:1.4">–</div></div>
+  </div>
+
+  <div class="card" style="margin-bottom:14px">
+    <h2>📤 新聞稿媒體擴散（發布日 D0 → 第三天 D+3 的報導數）</h2>
+    <div class="chart-wrap"><canvas id="prChart"></canvas></div>
+  </div>
+
+  <div class="card">
+    <h2>🗂️ 新聞稿清單（點列可展開報導明細）</h2>
+    <div class="table-wrap">
+      <table>
+        <thead><tr>
+          <th style="width:90px">發布日</th><th>新聞稿標題</th>
+          <th class="offset-cell" style="width:56px">D0</th>
+          <th class="offset-cell" style="width:56px">D+1</th>
+          <th class="offset-cell" style="width:56px">D+2</th>
+          <th class="offset-cell" style="width:56px">D+3</th>
+          <th class="offset-cell" style="width:70px">總報導</th>
+          <th class="offset-cell" style="width:70px">媒體數</th>
+        </tr></thead>
+        <tbody id="prBody"></tbody>
+      </table>
+    </div>
+    <p class="muted" style="font-size:12px;margin-top:10px">
+      報導數為 Google News 中與新聞稿標題高度相關的新聞則數；媒體數為發出報導的不同媒體家數。
+      新聞稿發布後 10 天內每次排程都會回補，之後定格。
+    </p>
+  </div>
+</div><!-- /tab-pr -->
+
+<footer>資料來源：Google News RSS（近 30 天）＋ 產業發展署官網新聞稿｜關鍵字依經濟部與產業發展署重點政策設計｜情緒為簡易詞典判斷，僅供參考</footer>
+
+<script>
+let DATA = null;
+let PRDATA = null;
+let charts = {};
+
+const fmtDate = d => d.slice(5); // MM-DD
+
+function switchTab(name) {
+  document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
+  document.getElementById('tab-overview').hidden = name !== 'overview';
+  document.getElementById('tab-pr').hidden = name !== 'pr';
+}
+
+async function load() {
+  const [res, prRes] = await Promise.all([fetch('/api/summary'), fetch('/api/pr')]);
+  DATA = await res.json();
+  PRDATA = await prRes.json();
+  render();
+  renderPR();
+}
+
+function render() {
+  const d = DATA;
+  document.getElementById('kpiTotal').textContent = d.kpi.total_30d.toLocaleString();
+  document.getElementById('kpiToday').textContent = d.kpi.today.toLocaleString();
+  const diff = d.kpi.this_week - d.kpi.last_week;
+  const pct = d.kpi.last_week ? Math.round(diff / d.kpi.last_week * 100) : 0;
+  document.getElementById('kpiWeek').innerHTML =
+    `${d.kpi.this_week} <span class="${diff>=0?'up':'down'}" style="font-size:15px">${diff>=0?'▲':'▼'}${Math.abs(pct)}%</span>`;
+  document.getElementById('kpiWeekSub').textContent = `前 7 天：${d.kpi.last_week} 則`;
+  document.getElementById('kpiTopTag').textContent = d.kpi.top_tag;
+  const lf = d.last_fetch ? d.last_fetch.run_at.replace('T',' ').slice(0,16) : '尚未抓取';
+  document.getElementById('metaLine').textContent = `最後更新：${lf}｜觀測期間：${d.days[0]} ~ ${d.days[d.days.length-1]}`;
+
+  const gridColor = 'rgba(143,160,189,.15)', tickColor = '#8fa0bd';
+  Chart.defaults.color = tickColor;
+  Chart.defaults.font.family = '"PingFang TC","Microsoft JhengHei",sans-serif';
+
+  // 趨勢圖
+  destroy('trend');
+  charts.trend = new Chart(document.getElementById('trendChart'), {
+    type: 'line',
+    data: {
+      labels: d.days.map(fmtDate),
+      datasets: d.series.map(s => ({
+        label: s.tag, data: s.counts, borderColor: s.color, backgroundColor: s.color,
+        tension: .3, pointRadius: 0, pointHitRadius: 8, borderWidth: 2,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, boxHeight: 10, usePointStyle: true } } },
+      scales: {
+        x: { grid: { color: gridColor }, ticks: { maxTicksLimit: 12 } },
+        y: { grid: { color: gridColor }, beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+
+  // 標籤總量
+  destroy('total');
+  charts.total = new Chart(document.getElementById('totalChart'), {
+    type: 'bar',
+    data: {
+      labels: d.totals.map(t => t.tag),
+      datasets: [{ data: d.totals.map(t => t.total), backgroundColor: d.totals.map(t => t.color), borderRadius: 6 }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { grid: { color: gridColor }, beginAtZero: true, ticks: { precision: 0 } }, y: { grid: { display: false } } }
+    }
+  });
+
+  // 情緒圓餅
+  destroy('sent');
+  const s = d.sentiment;
+  charts.sent = new Chart(document.getElementById('sentChart'), {
+    type: 'doughnut',
+    data: {
+      labels: ['正面', '中立', '負面'],
+      datasets: [{ data: [s['正面']||0, s['中立']||0, s['負面']||0],
+        backgroundColor: ['#59a14f', '#8fa0bd', '#e15759'], borderWidth: 0 }]
+    },
+    options: { responsive: true, maintainAspectRatio: false, cutout: '60%',
+      plugins: { legend: { position: 'bottom' } } }
+  });
+
+  // 媒體來源
+  destroy('source');
+  charts.source = new Chart(document.getElementById('sourceChart'), {
+    type: 'bar',
+    data: {
+      labels: d.sources.map(x => x.source),
+      datasets: [{ data: d.sources.map(x => x.count), backgroundColor: '#4e9af1', borderRadius: 6 }]
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { display: false } },
+      scales: { x: { grid: { color: gridColor }, beginAtZero: true, ticks: { precision: 0 } }, y: { grid: { display: false } } }
+    }
+  });
+
+  // 標籤下拉選單
+  const sel = document.getElementById('tagFilter');
+  const cur = sel.value;
+  sel.innerHTML = '<option value="">全部標籤</option>' +
+    d.series.map(x => `<option${x.tag===cur?' selected':''}>${x.tag}</option>`).join('');
+  renderTable();
+}
+
+function destroy(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
+
+const OFFSET_COLORS = ['#4e9af1', '#59a14f', '#edc948', '#8fa0bd'];
+const OFFSET_LABELS = ['D0 當天', 'D+1 隔天', 'D+2', 'D+3'];
+
+function renderPR() {
+  const prs = PRDATA.press_releases;
+  const cutoff = new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
+  const recent = prs.filter(p => p.release_date >= cutoff);
+  document.getElementById('prCount').textContent = recent.length;
+  const avg = recent.length ? (recent.reduce((s, p) => s + p.total, 0) / recent.length).toFixed(1) : '–';
+  document.getElementById('prAvg').textContent = avg + ' 則';
+  const top = [...recent].sort((a, b) => b.total - a.total)[0];
+  document.getElementById('prTop').textContent = top && top.total > 0
+    ? `${top.title.slice(0, 24)}…（${top.total} 則／${top.media} 家媒體）` : '尚無資料';
+
+  // 堆疊橫條圖：每則新聞稿的 D0~D+3 報導數
+  const chartPrs = [...recent].reverse(); // 舊→新，由上而下讀
+  destroy('pr');
+  charts.pr = new Chart(document.getElementById('prChart'), {
+    type: 'bar',
+    data: {
+      labels: chartPrs.map(p => `${p.release_date.slice(5)}｜${p.title.slice(0, 16)}…`),
+      datasets: OFFSET_LABELS.map((lab, i) => ({
+        label: lab,
+        data: chartPrs.map(p => p.counts[i]),
+        backgroundColor: OFFSET_COLORS[i],
+        borderRadius: 3,
+      }))
+    },
+    options: {
+      indexAxis: 'y', responsive: true, maintainAspectRatio: false,
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true } } },
+      scales: {
+        x: { stacked: true, grid: { color: 'rgba(143,160,189,.15)' }, beginAtZero: true, ticks: { precision: 0 } },
+        y: { stacked: true, grid: { display: false }, ticks: { font: { size: 11 } } }
+      }
+    }
+  });
+
+  // 表格＋展開明細
+  document.getElementById('prBody').innerHTML = recent.map((p, idx) => {
+    const cells = p.counts.map(c =>
+      `<td class="offset-cell"><span class="offset-badge${c > 0 ? ' hot' : ''}">${c}</span></td>`).join('');
+    const arts = p.articles.map(a => `
+      <div class="pr-art">
+        <span class="d">D${a.day_offset === 0 ? '0' : '+' + a.day_offset}</span>
+        <span class="s">${a.source || '－'}</span>
+        <a href="${a.link}" target="_blank" rel="noopener">${a.title}</a>
+      </div>`).join('') || '<span class="muted">尚未搜到相關報導</span>';
+    return `
+      <tr class="pr-row" onclick="togglePR(${idx})">
+        <td class="muted">${p.release_date.slice(5)}</td>
+        <td><a href="${p.url}" target="_blank" rel="noopener" onclick="event.stopPropagation()">${p.title}</a></td>
+        ${cells}
+        <td class="offset-cell" style="font-weight:700">${p.total}</td>
+        <td class="offset-cell" style="font-weight:700">${p.media}</td>
+      </tr>
+      <tr class="pr-detail" id="prDetail${idx}" hidden><td colspan="8">${arts}</td></tr>`;
+  }).join('') || '<tr><td colspan="8" class="muted">尚無新聞稿資料</td></tr>';
+}
+
+function togglePR(idx) {
+  const el = document.getElementById('prDetail' + idx);
+  el.hidden = !el.hidden;
+}
+
+function renderTable() {
+  const tag = document.getElementById('tagFilter').value;
+  const sent = document.getElementById('sentFilter').value;
+  const kw = document.getElementById('searchBox').value.trim();
+  const colorMap = {};
+  DATA.series.forEach(s => colorMap[s.tag] = s.color);
+  const rows = DATA.articles.filter(a =>
+    (!tag || a.tag === tag) && (!sent || a.sentiment === sent) && (!kw || a.title.includes(kw))
+  ).slice(0, 100).map(a => `
+    <tr>
+      <td class="muted">${a.pub_date.slice(5)}</td>
+      <td><span class="tag-chip" style="background:${colorMap[a.tag]||'#666'}">${a.tag}</span></td>
+      <td><a href="${a.link}" target="_blank" rel="noopener">${a.title}</a></td>
+      <td class="muted">${a.source||''}</td>
+      <td><span class="sent ${a.sentiment}">${a.sentiment}</span></td>
+    </tr>`).join('');
+  document.getElementById('articleBody').innerHTML = rows || '<tr><td colspan="5" class="muted">沒有符合的資料</td></tr>';
+}
+
+async function refresh() {
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true; btn.textContent = '⏳ 抓取中（約 1～2 分鐘）…';
+  try {
+    const res = await fetch('/api/refresh', { method: 'POST' });
+    const r = await res.json();
+    if (!r.ok) alert('更新時發生問題：' + r.output);
+    await load();
+  } catch (e) {
+    alert('更新失敗：' + e);
+  } finally {
+    btn.disabled = false; btn.textContent = '🔄 立即更新資料';
+  }
+}
+
+load();
+</script>
+</body>
+</html>
