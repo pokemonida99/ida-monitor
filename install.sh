@@ -17,39 +17,12 @@ if ! "$PYTHON" --version >/dev/null 2>&1; then
 fi
 
 mkdir -p "$DEST/logs"
-cp "$SRC"/{fetch_news.py,fetch_pr.py,enrich.py,server.py,export_static.py,index.html,tags.json} "$DEST/"
+cp "$SRC"/{fetch_news.py,fetch_pr.py,fetch_alerts.py,enrich.py,server.py,export_static.py,index.html,tags.json,alert_rules.json} "$DEST/"
 # 資料庫只在目的地不存在時才複製，避免覆蓋累積的歷史資料
 [ -f "$DEST/data.db" ] || { [ -f "$SRC/data.db" ] && cp "$SRC/data.db" "$DEST/"; }
 
-# 動態產生 launchd 排程設定（每天 08/12/16/20 抓資料；儀表板伺服器常駐）
+# 動態產生 launchd 設定：儀表板伺服器常駐（資料更新用網頁上的「立即更新」按鈕手動觸發）
 mkdir -p ~/Library/LaunchAgents
-
-cat > ~/Library/LaunchAgents/com.ida.monitor.fetch.plist <<EOF
-<?xml version="1.0" encoding="UTF-8"?>
-<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<plist version="1.0">
-<dict>
-    <key>Label</key>
-    <string>com.ida.monitor.fetch</string>
-    <key>ProgramArguments</key>
-    <array>
-        <string>${PYTHON}</string>
-        <string>${DEST}/fetch_news.py</string>
-    </array>
-    <key>StartCalendarInterval</key>
-    <array>
-        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>0</integer></dict>
-        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>0</integer></dict>
-    </array>
-    <key>StandardOutPath</key>
-    <string>${DEST}/logs/fetch.log</string>
-    <key>StandardErrorPath</key>
-    <string>${DEST}/logs/fetch.log</string>
-</dict>
-</plist>
-EOF
 
 cat > ~/Library/LaunchAgents/com.ida.monitor.server.plist <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -76,9 +49,7 @@ cat > ~/Library/LaunchAgents/com.ida.monitor.server.plist <<EOF
 </plist>
 EOF
 
-launchctl bootout "gui/$UID_NUM/com.ida.monitor.fetch" 2>/dev/null || true
 launchctl bootout "gui/$UID_NUM/com.ida.monitor.server" 2>/dev/null || true
-launchctl bootstrap "gui/$UID_NUM" ~/Library/LaunchAgents/com.ida.monitor.fetch.plist
 launchctl bootstrap "gui/$UID_NUM" ~/Library/LaunchAgents/com.ida.monitor.server.plist
 
 # 全新安裝（沒有資料庫）時，立刻抓一次資料

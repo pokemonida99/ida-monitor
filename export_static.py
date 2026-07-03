@@ -18,7 +18,7 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR))
 
-from server import build_summary, build_pr_summary  # noqa: E402
+from server import build_summary, build_pr_summary, build_alerts  # noqa: E402
 
 
 def main() -> int:
@@ -29,6 +29,8 @@ def main() -> int:
         json.dumps(build_summary(), ensure_ascii=False), encoding="utf-8")
     (dest / "pr.json").write_text(
         json.dumps(build_pr_summary(), ensure_ascii=False), encoding="utf-8")
+    (dest / "alerts.json").write_text(
+        json.dumps(build_alerts(), ensure_ascii=False), encoding="utf-8")
     shutil.copy(BASE_DIR / "index.html", dest / "index.html")
 
     print(f"已匯出靜態儀表板 → {dest}")

@@ -1,12 +1,12 @@
 # 產業發展署輿情觀測器
 
-監測經濟部產業發展署相關議題的新聞聲量，提供 30 天趨勢儀表板，並每天自動更新 4 次。
+監測經濟部產業發展署相關議題的新聞聲量，提供 30 天趨勢儀表板、新聞稿擴散追蹤與負面警訊提醒；資料由儀表板上的按鈕手動更新。
 
 ## 儀表板
 
 開瀏覽器進入 **http://127.0.0.1:8765**（伺服器由 launchd 常駐，開機自動啟動）。
 
-功能（兩個頁籤）：
+功能（三個頁籤）：
 
 **📊 聲量總覽**
 - 近 30 天總聲量、今日則數、週對週變化、最熱標籤（KPI 卡）
@@ -26,6 +26,21 @@
 - 點新聞稿列可展開報導明細（原始媒體、轉載平台、記者、標題）
 - 判斷方式：以新聞稿標題關鍵詞發 5~7 組寬窄不同的查詢搜 Google News，
   再用引號詞組／關鍵字／雙字組相似度過濾不相關報導；發布後 10 天內每次排程持續回補
+
+**⚠️ 負面警訊**
+- 監測五類負面消息（近 14 天）：斷供缺料、漲價與成本、失業與裁員、
+  公協會動態（理事長／秘書長發言）、貿易制裁與關稅（反傾銷、出口管制…）
+- 提醒同仁撰寫輿情分析：頁籤有待處理數字徽章，寫完按「✓ 已處理」歸檔
+- 雙層過濾：搜尋關鍵字＋標題觸發詞（例如失業類標題必須含「裁員／無薪假／關廠…」）
+- 類別、關鍵字、觸發詞都在 `alert_rules.json`，可自行增修
+
+## 資料更新方式
+
+**手動更新**：按儀表板右上角「🔄 立即更新資料」（約 2～4 分鐘，會依序更新
+聲量、新聞稿擴散、負面警訊），或在終端機執行 `python3 ~/ida-monitor/fetch_news.py`。
+
+如果想改回每天自動更新，跟 Claude 說一聲即可（先前的 launchd 排程設定
+可以隨時加回 install.sh）。
 
 ## 觀測標籤（tags.json）
 
@@ -52,10 +67,10 @@
 - `server.py`：純 Python 標準庫的網頁伺服器（無需安裝套件），提供儀表板與 JSON API
 - `index.html`：Chart.js 儀表板
 
-## 自動排程（launchd）
+## launchd 常駐設定
 
-- `com.ida.monitor.fetch`：每天 **08:00、12:00、16:00、20:00** 自動抓新資料
 - `com.ida.monitor.server`：儀表板伺服器開機常駐（port 8765）
+- 資料更新為**手動**（儀表板上的更新按鈕），沒有自動排程
 
 ⚠️ 因 macOS 隱私保護不允許背景程序讀「文件」資料夾，**執行版安裝在 `~/ida-monitor`**，
 這個資料夾只是原始碼。改程式後跑 `bash install.sh` 即可重新部署（歷史資料庫不會被覆蓋）。
@@ -63,17 +78,13 @@
 常用指令：
 
 ```bash
-bash install.sh                                        # 部署 + 重新載入排程
-launchctl kickstart gui/$(id -u)/com.ida.monitor.fetch # 立刻手動抓一次
+bash install.sh                                        # 部署 + 重啟伺服器
+python3 ~/ida-monitor/fetch_news.py                     # 手動抓一次資料
 tail ~/ida-monitor/logs/fetch.log                      # 看抓取記錄
-launchctl list | grep com.ida.monitor                  # 檢查排程狀態
-# 移除排程：
-launchctl bootout gui/$(id -u)/com.ida.monitor.fetch
+launchctl list | grep com.ida.monitor                  # 檢查伺服器狀態
+# 移除常駐伺服器：
 launchctl bootout gui/$(id -u)/com.ida.monitor.server
 ```
-
-改排程時間：編輯 `install.sh` 裡 `StartCalendarInterval` 區塊，再跑 `bash install.sh`
-（排程設定檔由 install.sh 動態產生，路徑自動偵測，換電腦不用改）。
 
 ## 搬到另一台電腦（Mac）
 
@@ -86,7 +97,7 @@ launchctl bootout gui/$(id -u)/com.ida.monitor.server
    bash install.sh
    ```
 
-   就這樣。腳本會自動安裝到新電腦的 `~/ida-monitor`、設好排程、啟動儀表板
+   就這樣。腳本會自動安裝到新電腦的 `~/ida-monitor` 並啟動儀表板
    （首次安裝且沒帶 data.db 時會立刻抓一次資料）。
 3. 開瀏覽器進 http://127.0.0.1:8765。
 

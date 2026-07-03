@@ -172,6 +172,25 @@ def build_pr_summary() -> dict:
     }
 
 
+def build_alerts() -> dict:
+    """負面警訊：近 14 天需注意的新聞，提醒撰寫輿情。"""
+    rules = json.loads((BASE_DIR / "alert_rules.json").read_text(encoding="utf-8"))["categories"]
+    start = (datetime.now(TAIPEI_TZ).date() - timedelta(days=14)).strftime("%Y-%m-%d")
+    conn = sqlite3.connect(DB_PATH)
+    conn.row_factory = sqlite3.Row
+    rows = conn.execute(
+        "SELECT id, category, title, link, source, pub_date, handled "
+        "FROM alert_articles WHERE pub_date >= ? ORDER BY pub_date DESC, id DESC LIMIT 400",
+        (start,),
+    ).fetchall()
+    conn.close()
+    return {
+        "generated_at": datetime.now(TAIPEI_TZ).isoformat(timespec="seconds"),
+        "categories": [{"category": r["category"], "color": r["color"]} for r in rules],
+        "articles": [dict(r) for r in rows],
+    }
+
+
 class Handler(BaseHTTPRequestHandler):
     def _send(self, code: int, body: bytes, ctype: str) -> None:
         self.send_response(code)
@@ -198,11 +217,30 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(build_pr_summary())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+        elif self.path.startswith("/api/alerts"):
+            try:
+                self._send_json(build_alerts())
+            except Exception as e:
+                self._send_json({"error": str(e)}, 500)
         else:
             self._send(404, b"not found", "text/plain")
 
     def do_POST(self):
-        if self.path == "/api/refresh":
+        if self.path == "/api/alert_done":
+            try:
+                length = int(self.headers.get("Content-Length", 0))
+                data = json.loads(self.rfile.read(length))
+                conn = sqlite3.connect(DB_PATH)
+                conn.execute(
+                    "UPDATE alert_articles SET handled = ? WHERE id = ?",
+                    (1 if data.get("handled") else 0, int(data["id"])),
+                )
+                conn.commit()
+                conn.close()
+                self._send_json({"ok": True})
+            except Exception as e:
+                self._send_json({"ok": False, "error": str(e)}, 500)
+        elif self.path == "/api/refresh":
             try:
                 proc = subprocess.run(
                     [sys.executable, str(BASE_DIR / "fetch_news.py")],

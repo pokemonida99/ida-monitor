@@ -82,6 +82,28 @@
   tr.pr-row { cursor: pointer; }
   tr.pr-row:hover td { background: rgba(78,154,241,.06); }
   tr.pr-detail td { background: var(--panel2); padding: 12px 16px; }
+  .badge {
+    display: inline-block; min-width: 20px; padding: 1px 7px; border-radius: 999px;
+    background: var(--neg); color: #fff; font-size: 12px; font-weight: 700; text-align: center;
+  }
+  .chip-row { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 14px; }
+  .cat-chip {
+    padding: 5px 14px; border-radius: 999px; font-size: 13px; cursor: pointer;
+    background: var(--panel2); color: var(--muted); border: 1px solid var(--border); font-family: inherit;
+  }
+  .cat-chip.on { color: #fff; border-color: transparent; }
+  .alert-row { display: flex; gap: 12px; align-items: flex-start; padding: 11px 4px; border-bottom: 1px solid var(--border); }
+  .alert-row.done { opacity: .45; }
+  .alert-row .date { color: var(--muted); min-width: 46px; font-size: 13px; padding-top: 2px; }
+  .alert-row .src { color: var(--muted); min-width: 100px; font-size: 13px; padding-top: 2px; }
+  .alert-row .t { flex: 1; }
+  .alert-row .t a { color: var(--text); text-decoration: none; }
+  .alert-row .t a:hover { color: var(--accent); text-decoration: underline; }
+  .done-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 7px;
+    padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; font-family: inherit;
+  }
+  .done-btn:hover { border-color: var(--pos); color: var(--pos); }
   .pr-art { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
   .pr-art .d { color: var(--accent); min-width: 36px; font-weight: 600; }
   .pr-art .s { color: var(--muted); min-width: 110px; }
@@ -100,6 +122,7 @@
 <nav class="tabs">
   <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 聲量總覽</button>
   <button class="tab-btn" data-tab="pr" onclick="switchTab('pr')">📤 新聞稿擴散</button>
+  <button class="tab-btn" data-tab="alerts" onclick="switchTab('alerts')">⚠️ 負面警訊 <span id="alertBadge" class="badge" hidden></span></button>
 </nav>
 
 <div id="tab-overview">
@@ -187,6 +210,27 @@
   </div>
 </div><!-- /tab-pr -->
 
+<div id="tab-alerts" hidden>
+  <div class="kpis">
+    <div class="kpi"><div class="label">近 14 天警訊</div><div class="value" id="alTotal">–</div></div>
+    <div class="kpi"><div class="label">待處理（未寫輿情）</div><div class="value" id="alPending" style="color:var(--neg)">–</div></div>
+    <div class="kpi"><div class="label">今日新增</div><div class="value" id="alToday">–</div></div>
+    <div class="kpi"><div class="label">最多警訊類別</div><div class="value" id="alTopCat" style="font-size:20px">–</div></div>
+  </div>
+
+  <div class="card">
+    <h2>⚠️ 負面消息監測（斷供、漲價、裁員、公協會發言、貿易制裁）— 提醒撰寫輿情分析</h2>
+    <div class="chip-row" id="alertChips"></div>
+    <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:10px">
+      <input type="checkbox" id="showHandled" onchange="renderAlerts()"> 顯示已處理項目
+    </label>
+    <div id="alertList"></div>
+    <p class="muted" style="font-size:12px;margin-top:10px">
+      監測範圍近 14 天。同仁寫完輿情分析後按「✓ 已處理」歸檔；警訊類別與關鍵字在 alert_rules.json 可自行增修。
+    </p>
+  </div>
+</div><!-- /tab-alerts -->
+
 <footer>資料來源：Google News RSS（近 30 天）＋ 產業發展署官網新聞稿｜關鍵字依經濟部與產業發展署重點政策設計｜情緒為簡易詞典判斷，僅供參考</footer>
 
 <script>
@@ -197,11 +241,14 @@ let charts = {};
 const fmtDate = d => d.slice(5); // MM-DD
 
 let prRendered = false;
+let ALERTS = null;
+let alertCatFilter = '';
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.getElementById('tab-overview').hidden = name !== 'overview';
   document.getElementById('tab-pr').hidden = name !== 'pr';
+  document.getElementById('tab-alerts').hidden = name !== 'alerts';
   // 圖表必須等頁籤顯示後才建立，否則畫布拿不到尺寸
   if (name === 'pr' && PRDATA && !prRendered) {
     renderPR();
@@ -213,19 +260,22 @@ let STATIC_MODE = false;
 
 async function load() {
   try {
-    const [res, prRes] = await Promise.all([fetch('/api/summary'), fetch('/api/pr')]);
-    if (!res.ok || !prRes.ok) throw new Error('no api');
+    const [res, prRes, alRes] = await Promise.all([fetch('/api/summary'), fetch('/api/pr'), fetch('/api/alerts')]);
+    if (!res.ok || !prRes.ok || !alRes.ok) throw new Error('no api');
     DATA = await res.json();
     PRDATA = await prRes.json();
+    ALERTS = await alRes.json();
   } catch (e) {
     // 沒有後端 API（cPanel 靜態部署）：改讀 cron 匯出的 JSON
-    const [res, prRes] = await Promise.all([fetch('summary.json'), fetch('pr.json')]);
+    const [res, prRes, alRes] = await Promise.all([fetch('summary.json'), fetch('pr.json'), fetch('alerts.json')]);
     DATA = await res.json();
     PRDATA = await prRes.json();
+    ALERTS = await alRes.json();
     STATIC_MODE = true;
     document.getElementById('refreshBtn').style.display = 'none';
   }
   render();
+  renderAlerts();
   prRendered = false;
   if (!document.getElementById('tab-pr').hidden) {
     renderPR();
@@ -400,6 +450,64 @@ function togglePR(idx) {
   el.hidden = !el.hidden;
 }
 
+function renderAlerts() {
+  const catColor = {};
+  ALERTS.categories.forEach(c => catColor[c.category] = c.color);
+  const today = new Date().toISOString().slice(0, 10);
+  const arts = ALERTS.articles;
+  const pending = arts.filter(a => !a.handled);
+
+  document.getElementById('alTotal').textContent = arts.length;
+  document.getElementById('alPending').textContent = pending.length;
+  document.getElementById('alToday').textContent = arts.filter(a => a.pub_date === today).length;
+  const catCount = {};
+  pending.forEach(a => catCount[a.category] = (catCount[a.category] || 0) + 1);
+  const topCat = Object.entries(catCount).sort((a, b) => b[1] - a[1])[0];
+  document.getElementById('alTopCat').textContent = topCat ? `${topCat[0]}（${topCat[1]}）` : '－';
+
+  // 頁籤上的待處理數字
+  const badge = document.getElementById('alertBadge');
+  badge.textContent = pending.length;
+  badge.hidden = pending.length === 0;
+
+  // 類別篩選 chips
+  document.getElementById('alertChips').innerHTML =
+    `<button class="cat-chip${!alertCatFilter ? ' on' : ''}" ${!alertCatFilter ? 'style="background:var(--accent)"' : ''} onclick="alertCatFilter='';renderAlerts()">全部</button>` +
+    ALERTS.categories.map(c => {
+      const n = arts.filter(a => a.category === c.category && !a.handled).length;
+      const on = alertCatFilter === c.category;
+      return `<button class="cat-chip${on ? ' on' : ''}" ${on ? `style="background:${c.color}"` : ''}
+        onclick="alertCatFilter='${c.category}';renderAlerts()">${c.category}（${n}）</button>`;
+    }).join('');
+
+  const showHandled = document.getElementById('showHandled').checked;
+  const list = arts.filter(a =>
+    (!alertCatFilter || a.category === alertCatFilter) && (showHandled || !a.handled));
+  document.getElementById('alertList').innerHTML = list.slice(0, 120).map(a => `
+    <div class="alert-row${a.handled ? ' done' : ''}">
+      <span class="date">${a.pub_date.slice(5)}</span>
+      <span class="tag-chip" style="background:${catColor[a.category] || '#666'}">${a.category}</span>
+      <span class="t"><a href="${a.link}" target="_blank" rel="noopener">${a.title}</a></span>
+      <span class="src">${a.source || ''}</span>
+      ${STATIC_MODE ? '' : `<button class="done-btn" onclick="markAlert(${a.id}, ${a.handled ? 0 : 1})">${a.handled ? '↩ 復原' : '✓ 已處理'}</button>`}
+    </div>`).join('') || '<div class="muted" style="padding:20px">目前沒有符合條件的警訊 🎉</div>';
+}
+
+async function markAlert(id, handled) {
+  try {
+    await fetch('/api/alert_done', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ id, handled }),
+    });
+    const a = ALERTS.articles.find(x => x.id === id);
+    if (a) a.handled = handled;
+    renderAlerts();
+  } catch (e) {
+    alert('更新失敗：' + e);
+  }
+}
+
 function renderTable() {
   const tag = document.getElementById('tagFilter').value;
   const sent = document.getElementById('sentFilter').value;
@@ -421,7 +529,7 @@ function renderTable() {
 
 async function refresh() {
   const btn = document.getElementById('refreshBtn');
-  btn.disabled = true; btn.textContent = '⏳ 抓取中（約 1～2 分鐘）…';
+  btn.disabled = true; btn.textContent = '⏳ 抓取中（約 2～4 分鐘）…';
   try {
     const res = await fetch('/api/refresh', { method: 'POST' });
     const r = await res.json();
