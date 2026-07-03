@@ -82,6 +82,7 @@ def main() -> int:
     for rule in rules:
         cat = rule["category"]
         triggers = rule.get("triggers", [])
+        topic_triggers = rule.get("topic_triggers", [])
         seen_titles = {
             r[0] for r in conn.execute(
                 "SELECT title FROM alert_articles WHERE category = ?", (cat,))
@@ -97,6 +98,9 @@ def main() -> int:
                     continue
                 # 標題必須含類別觸發詞，過濾搜尋引擎的鬆散比對雜訊
                 if triggers and not any(t in title for t in triggers):
+                    continue
+                # 部分類別（如立委質疑）需再含產業相關詞，排除一般政治新聞
+                if topic_triggers and not any(t in title for t in topic_triggers):
                     continue
                 cur = conn.execute(
                     "INSERT OR IGNORE INTO alert_articles "
