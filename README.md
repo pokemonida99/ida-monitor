@@ -89,3 +89,26 @@ launchctl bootout gui/$(id -u)/com.ida.monitor.server
 需要 macOS 內建的 python3（沒有的話跑 `xcode-select --install`）。
 Windows／Linux 沒有 launchd：程式本身（python3 標準庫）可以直接跑，
 排程改用 Linux 的 cron 或 Windows 的工作排程器呼叫 `fetch_news.py` 即可。
+
+## 部署到 cPanel 主機（靜態模式）
+
+cPanel 共享主機通常不能常駐程式，改用「cron 定時抓取 → 匯出靜態 JSON」模式，
+儀表板（index.html）偵測不到 API 時會自動改讀 JSON，功能完全相同
+（僅隱藏「立即更新」按鈕，更新交給 cron）。
+
+1. 用 cPanel 檔案管理員（或 FTP）把整個專案上傳到家目錄，例如 `/home/帳號/ida-monitor`
+2. cPanel → **Cron Jobs**，新增排程（例如每天 8/12/16/20 點：Minute `0`、Hour `8,12,16,20`）：
+
+   ```
+   python3 /home/帳號/ida-monitor/fetch_news.py && python3 /home/帳號/ida-monitor/export_static.py /home/帳號/public_html/yuqing
+   ```
+
+3. 完成後儀表板網址就是 `https://你的網域/yuqing/`
+
+注意事項：
+- 主機要有 `python3`（3.7+，絕大多數 Linux 主機都有；可先設一個
+  `python3 --version` 的 cron 寄信測試，或用 SSH 確認）
+- 主機需允許對外連線（抓 Google News 與產發署官網）
+- 網頁是公開的——建議用 cPanel 的「目錄隱私（Directory Privacy）」
+  給 `yuqing` 目錄加帳號密碼，只讓同仁看
+- 若主機有「Setup Python App」也可跑即時 API 版，但靜態模式相容性最高

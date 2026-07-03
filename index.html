@@ -200,10 +200,22 @@ function switchTab(name) {
   document.getElementById('tab-pr').hidden = name !== 'pr';
 }
 
+let STATIC_MODE = false;
+
 async function load() {
-  const [res, prRes] = await Promise.all([fetch('/api/summary'), fetch('/api/pr')]);
-  DATA = await res.json();
-  PRDATA = await prRes.json();
+  try {
+    const [res, prRes] = await Promise.all([fetch('/api/summary'), fetch('/api/pr')]);
+    if (!res.ok || !prRes.ok) throw new Error('no api');
+    DATA = await res.json();
+    PRDATA = await prRes.json();
+  } catch (e) {
+    // 沒有後端 API（cPanel 靜態部署）：改讀 cron 匯出的 JSON
+    const [res, prRes] = await Promise.all([fetch('summary.json'), fetch('pr.json')]);
+    DATA = await res.json();
+    PRDATA = await prRes.json();
+    STATIC_MODE = true;
+    document.getElementById('refreshBtn').style.display = 'none';
+  }
   render();
   renderPR();
 }
