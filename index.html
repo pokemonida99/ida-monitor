@@ -218,6 +218,17 @@
     <div class="kpi"><div class="label">最多警訊類別</div><div class="value" id="alTopCat" style="font-size:20px">–</div></div>
   </div>
 
+  <div class="grid">
+    <div class="card">
+      <h2>📉 近 14 天每日警訊趨勢（依類別堆疊）</h2>
+      <div class="chart-wrap sm"><canvas id="alTrendChart"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>🏷️ 警訊類別分布（14 天）</h2>
+      <div class="chart-wrap sm"><canvas id="alCatChart"></canvas></div>
+    </div>
+  </div>
+
   <div class="card">
     <h2>⚠️ 負面消息監測（斷供、漲價、裁員、公協會發言、貿易制裁）— 提醒撰寫輿情分析</h2>
     <div class="chip-row" id="alertChips"></div>
@@ -243,6 +254,7 @@ const fmtDate = d => d.slice(5); // MM-DD
 let prRendered = false;
 let ALERTS = null;
 let alertCatFilter = '';
+let alertChartsRendered = false;
 
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
@@ -253,6 +265,10 @@ function switchTab(name) {
   if (name === 'pr' && PRDATA && !prRendered) {
     renderPR();
     prRendered = true;
+  }
+  if (name === 'alerts' && ALERTS && !alertChartsRendered) {
+    renderAlertCharts();
+    alertChartsRendered = true;
   }
 }
 
@@ -277,9 +293,14 @@ async function load() {
   render();
   renderAlerts();
   prRendered = false;
+  alertChartsRendered = false;
   if (!document.getElementById('tab-pr').hidden) {
     renderPR();
     prRendered = true;
+  }
+  if (!document.getElementById('tab-alerts').hidden) {
+    renderAlertCharts();
+    alertChartsRendered = true;
   }
 }
 
@@ -491,6 +512,66 @@ function renderAlerts() {
       <span class="src">${a.source || ''}</span>
       ${STATIC_MODE ? '' : `<button class="done-btn" onclick="markAlert(${a.id}, ${a.handled ? 0 : 1})">${a.handled ? '↩ 復原' : '✓ 已處理'}</button>`}
     </div>`).join('') || '<div class="muted" style="padding:20px">目前沒有符合條件的警訊 🎉</div>';
+}
+
+function renderAlertCharts() {
+  const gridColor = 'rgba(143,160,189,.15)';
+  const cats = ALERTS.categories;
+  const arts = ALERTS.articles;
+
+  // 近 14 天日期軸
+  const days = [];
+  for (let i = 13; i >= 0; i--) {
+    days.push(new Date(Date.now() - i * 86400e3).toISOString().slice(0, 10));
+  }
+  const idx = {};
+  days.forEach((d, i) => idx[d] = i);
+
+  // 每日 × 類別 統計
+  const byCat = {};
+  cats.forEach(c => byCat[c.category] = new Array(14).fill(0));
+  const catTotal = {};
+  arts.forEach(a => {
+    if (a.pub_date in idx && byCat[a.category]) byCat[a.category][idx[a.pub_date]]++;
+    catTotal[a.category] = (catTotal[a.category] || 0) + 1;
+  });
+
+  destroy('alTrend');
+  charts.alTrend = new Chart(document.getElementById('alTrendChart'), {
+    type: 'bar',
+    data: {
+      labels: days.map(d => d.slice(5)),
+      datasets: cats.map(c => ({
+        label: c.category, data: byCat[c.category],
+        backgroundColor: c.color, borderRadius: 2,
+      }))
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false,
+      interaction: { mode: 'index', intersect: false },
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true } } },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, grid: { color: gridColor }, beginAtZero: true, ticks: { precision: 0 } }
+      }
+    }
+  });
+
+  destroy('alCat');
+  charts.alCat = new Chart(document.getElementById('alCatChart'), {
+    type: 'doughnut',
+    data: {
+      labels: cats.map(c => c.category),
+      datasets: [{
+        data: cats.map(c => catTotal[c.category] || 0),
+        backgroundColor: cats.map(c => c.color), borderWidth: 0,
+      }]
+    },
+    options: {
+      responsive: true, maintainAspectRatio: false, cutout: '60%',
+      plugins: { legend: { position: 'bottom', labels: { boxWidth: 10, usePointStyle: true } } }
+    }
+  });
 }
 
 async function markAlert(id, handled) {

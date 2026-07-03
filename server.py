@@ -180,7 +180,7 @@ def build_alerts() -> dict:
     conn.row_factory = sqlite3.Row
     rows = conn.execute(
         "SELECT id, category, title, link, source, pub_date, handled "
-        "FROM alert_articles WHERE pub_date >= ? ORDER BY pub_date DESC, id DESC LIMIT 400",
+        "FROM alert_articles WHERE pub_date >= ? ORDER BY pub_date DESC, id DESC LIMIT 1000",
         (start,),
     ).fetchall()
     conn.close()
