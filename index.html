@@ -17,6 +17,7 @@
     --pos: #59a14f; --neg: #e15759; --neu: #8fa0bd;
   }
   * { box-sizing: border-box; margin: 0; padding: 0; }
+  [hidden] { display: none !important; }
   body {
     background: var(--bg); color: var(--text);
     font-family: "PingFang TC", "Microsoft JhengHei", "Noto Sans TC", sans-serif;
@@ -104,6 +105,43 @@
     padding: 3px 10px; font-size: 12px; cursor: pointer; white-space: nowrap; font-family: inherit;
   }
   .done-btn:hover { border-color: var(--pos); color: var(--pos); }
+  #staleBanner {
+    background: #4a2f1a; border: 1px solid #8a5a2a; color: #ffd9a0;
+    border-radius: 10px; padding: 10px 16px; margin-bottom: 16px; font-size: 14px; line-height: 1.6;
+  }
+  .alert-row.vip { border-left: 3px solid var(--neg); padding-left: 8px; background: rgba(225,87,89,.05); }
+  .vip-tag { color: var(--neg); font-size: 11px; font-weight: 700; border: 1px solid var(--neg);
+    border-radius: 5px; padding: 1px 6px; white-space: nowrap; }
+  .group-count { color: var(--accent); font-size: 12px; font-weight: 600; white-space: nowrap; cursor: pointer; }
+  .group-sub { margin-left: 58px; border-left: 2px solid var(--border); padding-left: 12px; }
+  .export-btn {
+    background: none; border: 1px solid var(--border); color: var(--muted); border-radius: 7px;
+    padding: 4px 12px; font-size: 12px; cursor: pointer; font-family: inherit; float: right;
+  }
+  .export-btn:hover { color: var(--accent); border-color: var(--accent); }
+  #toast {
+    position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%);
+    background: #2a3a55; color: var(--text); border: 1px solid var(--accent);
+    border-radius: 10px; padding: 10px 18px; font-size: 14px; z-index: 99;
+    display: flex; gap: 14px; align-items: center; box-shadow: 0 4px 20px rgba(0,0,0,.4);
+  }
+  #toast button { background: none; border: none; color: var(--accent); cursor: pointer; font-size: 14px; font-weight: 600; font-family: inherit; }
+  #methodModal {
+    position: fixed; inset: 0; background: rgba(0,0,0,.6); z-index: 100;
+    display: flex; align-items: center; justify-content: center; padding: 20px;
+  }
+  #methodModal .box {
+    background: var(--panel); border: 1px solid var(--border); border-radius: 14px;
+    max-width: 640px; max-height: 80vh; overflow-y: auto; padding: 26px 30px; font-size: 14px; line-height: 1.8;
+  }
+  #methodModal h3 { margin-bottom: 12px; }
+  #methodModal h4 { margin: 14px 0 4px; color: var(--accent); font-size: 14px; }
+  #methodModal .close { float: right; background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; }
+  a.method-link { color: var(--muted); text-decoration: underline; cursor: pointer; }
+  @media (max-width: 700px) {
+    .alert-row { flex-wrap: wrap; }
+    .alert-row .t { flex-basis: 100%; order: 5; }
+  }
   .pr-art { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
   .pr-art .d { color: var(--accent); min-width: 36px; font-weight: 600; }
   .pr-art .s { color: var(--muted); min-width: 110px; }
@@ -118,6 +156,8 @@
   </div>
   <button id="refreshBtn" onclick="refresh()">🔄 立即更新資料</button>
 </header>
+
+<div id="staleBanner" hidden></div>
 
 <nav class="tabs">
   <button class="tab-btn active" data-tab="overview" onclick="switchTab('overview')">📊 聲量總覽</button>
@@ -146,7 +186,7 @@
 
 <div class="grid2">
   <div class="card">
-    <h2>😊 情緒分布（依標題關鍵詞判斷）</h2>
+    <h2>🙂 標題語氣傾向（自動判斷，僅供趨勢參考）</h2>
     <div class="chart-wrap sm"><canvas id="sentChart"></canvas></div>
   </div>
   <div class="card">
@@ -156,7 +196,7 @@
 </div>
 
 <div class="card">
-  <h2>🗞️ 最新新聞</h2>
+  <h2>🗞️ 最新新聞 <button class="export-btn" onclick="exportOverview()">⬇ 匯出 CSV</button></h2>
   <div class="toolbar">
     <select id="tagFilter" onchange="renderTable()"><option value="">全部標籤</option></select>
     <select id="sentFilter" onchange="renderTable()">
@@ -186,7 +226,7 @@
   </div>
 
   <div class="card">
-    <h2>🗂️ 新聞稿清單（點列可展開報導明細）</h2>
+    <h2>🗂️ 新聞稿清單（點列可展開報導明細） <button class="export-btn" onclick="exportPR()">⬇ 匯出 CSV</button></h2>
     <div class="table-wrap">
       <table>
         <thead><tr>
@@ -212,8 +252,8 @@
 
 <div id="tab-alerts" hidden>
   <div class="kpis">
-    <div class="kpi"><div class="label">近 14 天警訊</div><div class="value" id="alTotal">–</div></div>
-    <div class="kpi"><div class="label">待處理（未寫輿情）</div><div class="value" id="alPending" style="color:var(--neg)">–</div></div>
+    <div class="kpi"><div class="label">🔴 直接相關待處理</div><div class="value" id="alVip" style="color:var(--neg)">–</div><div class="sub muted">標題提及產發署／重點業務</div></div>
+    <div class="kpi"><div class="label">待處理事件數</div><div class="value" id="alPending">–</div><div class="sub muted" id="alPendingSub"></div></div>
     <div class="kpi"><div class="label">今日新增</div><div class="value" id="alToday">–</div></div>
     <div class="kpi"><div class="label">最多警訊類別</div><div class="value" id="alTopCat" style="font-size:20px">–</div></div>
   </div>
@@ -230,7 +270,7 @@
   </div>
 
   <div class="card">
-    <h2>⚠️ 負面消息監測（斷供、漲價、裁員、公協會發言、貿易制裁）— 提醒撰寫輿情分析</h2>
+    <h2>⚠️ 負面消息監測 — 相似報導已聚合為事件，紅框為產發署直接相關 <button class="export-btn" onclick="exportAlerts()">⬇ 匯出 CSV</button></h2>
     <div class="chip-row" id="alertChips"></div>
     <label style="font-size:13px;color:var(--muted);display:block;margin-bottom:10px">
       <input type="checkbox" id="showHandled" onchange="renderAlerts()"> 顯示已處理項目
@@ -242,7 +282,31 @@
   </div>
 </div><!-- /tab-alerts -->
 
-<footer>資料來源：Google News RSS（近 30 天）＋ 產業發展署官網新聞稿｜關鍵字依經濟部與產業發展署重點政策設計｜情緒為簡易詞典判斷，僅供參考</footer>
+<footer>資料來源：Google News RSS ＋ 產業發展署官網新聞稿｜<a class="method-link" onclick="document.getElementById('methodModal').hidden=false">ℹ️ 方法與限制說明（簡報引用前必讀）</a></footer>
+
+<div id="toast" hidden></div>
+
+<div id="methodModal" hidden onclick="if(event.target===this)this.hidden=true">
+  <div class="box">
+    <button class="close" onclick="document.getElementById('methodModal').hidden=true">✕</button>
+    <h3>ℹ️ 方法與限制說明</h3>
+    <h4>資料來源</h4>
+    聲量與警訊來自 Google News RSS 搜尋（繁中／台灣）；新聞稿清單來自產業發展署官網。
+    <h4>聲量是「抽樣」不是全量</h4>
+    Google News 每組關鍵字查詢最多回傳約 100 則，聲量數字反映的是<b>相對趨勢</b>（哪個議題熱、何時升溫），
+    不是市面上所有報導的總數。引用時建議寫「Google News 監測到 N 則」而非「共有 N 則報導」。
+    <h4>週對週變化</h4>
+    受 RSS 保留期與抽樣影響，漲跌幅為參考值；判讀時以趨勢圖形狀為主、百分比為輔。
+    <h4>標題語氣傾向</h4>
+    以正負面詞典對「標題」自動判斷，未讀內文，準確度有限，僅供整體氛圍參考，不建議單獨引用。
+    <h4>新聞稿擴散數</h4>
+    以新聞稿標題關鍵詞搜尋比對，記者大幅改寫或未被 Google News 收錄的報導可能漏計；
+    數字適合「新聞稿之間互相比較」，不宜當成絕對發稿數。無署名報導常為通訊稿改寫。
+    <h4>負面警訊</h4>
+    「直接相關」為標題含產發署／重點業務關鍵詞（可在 alert_rules.json 調整）；
+    相似標題自動聚合為同一事件，聚合演算法可能偶有誤併或漏併。
+  </div>
+</div>
 
 <script>
 let DATA = null;
@@ -250,6 +314,8 @@ let PRDATA = null;
 let charts = {};
 
 const fmtDate = d => d.slice(5); // MM-DD
+// 本地時區的 YYYY-MM-DD（toISOString 是 UTC，台北凌晨會差一天）
+const localYMD = (d = new Date()) => new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 
 let prRendered = false;
 let ALERTS = null;
@@ -316,6 +382,21 @@ function render() {
   document.getElementById('kpiTopTag').textContent = d.kpi.top_tag;
   const lf = d.last_fetch ? d.last_fetch.run_at.replace('T',' ').slice(0,16) : '尚未抓取';
   document.getElementById('metaLine').textContent = `最後更新：${lf}｜觀測期間：${d.days[0]} ~ ${d.days[d.days.length-1]}`;
+
+  // 資料過期警示：超過 24 小時未更新就提醒
+  const banner = document.getElementById('staleBanner');
+  if (d.last_fetch) {
+    const ageH = (Date.now() - new Date(d.last_fetch.run_at).getTime()) / 3600e3;
+    if (ageH > 24) {
+      const ageText = ageH >= 48 ? `${Math.floor(ageH / 24)} 天` : `${Math.round(ageH)} 小時`;
+      banner.innerHTML = `⚠️ 資料已 <b>${ageText}</b> 未更新，期間的新聞與警訊不會出現在下方 —— 建議按右上角「立即更新資料」。`;
+      banner.hidden = false;
+    } else banner.hidden = true;
+    // 資料不是今天抓的，「今日則數」顯示 0 會誤導
+    if (d.last_fetch.run_at.slice(0, 10) !== localYMD()) {
+      document.getElementById('kpiToday').innerHTML = '<span class="muted" style="font-size:18px">－（資料未更新）</span>';
+    }
+  }
 
   const gridColor = 'rgba(143,160,189,.15)', tickColor = '#8fa0bd';
   Chart.defaults.color = tickColor;
@@ -401,7 +482,7 @@ const OFFSET_LABELS = ['D0 當天', 'D+1 隔天', 'D+2', 'D+3'];
 
 function renderPR() {
   const prs = PRDATA.press_releases;
-  const cutoff = new Date(Date.now() - 30 * 86400e3).toISOString().slice(0, 10);
+  const cutoff = localYMD(new Date(Date.now() - 30 * 86400e3));
   const recent = prs.filter(p => p.release_date >= cutoff);
   document.getElementById('prCount').textContent = recent.length;
   const avg = recent.length ? (recent.reduce((s, p) => s + p.total, 0) / recent.length).toFixed(1) : '–';
@@ -471,47 +552,90 @@ function togglePR(idx) {
   el.hidden = !el.hidden;
 }
 
+const expandedGroups = new Set();
+
 function renderAlerts() {
   const catColor = {};
   ALERTS.categories.forEach(c => catColor[c.category] = c.color);
-  const today = new Date().toISOString().slice(0, 10);
+  const today = localYMD();
   const arts = ALERTS.articles;
   const pending = arts.filter(a => !a.handled);
 
-  document.getElementById('alTotal').textContent = arts.length;
-  document.getElementById('alPending').textContent = pending.length;
+  // 事件聚合（相似標題共用 group 編號）
+  const groups = {};
+  arts.forEach(a => (groups[a.group] = groups[a.group] || []).push(a));
+  const groupList = Object.values(groups);
+  const pendingGroups = groupList.filter(g => g.some(a => !a.handled));
+
+  document.getElementById('alVip').textContent = pending.filter(a => a.importance === 2).length;
+  document.getElementById('alPending').textContent = pendingGroups.length;
+  document.getElementById('alPendingSub').textContent = `共 ${pending.length} 則報導`;
   document.getElementById('alToday').textContent = arts.filter(a => a.pub_date === today).length;
   const catCount = {};
   pending.forEach(a => catCount[a.category] = (catCount[a.category] || 0) + 1);
   const topCat = Object.entries(catCount).sort((a, b) => b[1] - a[1])[0];
   document.getElementById('alTopCat').textContent = topCat ? `${topCat[0]}（${topCat[1]}）` : '－';
 
-  // 頁籤上的待處理數字
+  // 頁籤徽章：顯示待處理「事件數」而非報導數，避免數字嚇人
   const badge = document.getElementById('alertBadge');
-  badge.textContent = pending.length;
-  badge.hidden = pending.length === 0;
+  badge.textContent = pendingGroups.length;
+  badge.hidden = pendingGroups.length === 0;
 
   // 類別篩選 chips
   document.getElementById('alertChips').innerHTML =
     `<button class="cat-chip${!alertCatFilter ? ' on' : ''}" ${!alertCatFilter ? 'style="background:var(--accent)"' : ''} onclick="alertCatFilter='';renderAlerts()">全部</button>` +
     ALERTS.categories.map(c => {
-      const n = arts.filter(a => a.category === c.category && !a.handled).length;
+      const n = groupList.filter(g => g[0].category === c.category && g.some(a => !a.handled)).length;
       const on = alertCatFilter === c.category;
       return `<button class="cat-chip${on ? ' on' : ''}" ${on ? `style="background:${c.color}"` : ''}
         onclick="alertCatFilter='${c.category}';renderAlerts()">${c.category}（${n}）</button>`;
     }).join('');
 
   const showHandled = document.getElementById('showHandled').checked;
-  const list = arts.filter(a =>
-    (!alertCatFilter || a.category === alertCatFilter) && (showHandled || !a.handled));
-  document.getElementById('alertList').innerHTML = list.slice(0, 120).map(a => `
-    <div class="alert-row${a.handled ? ' done' : ''}">
-      <span class="date">${a.pub_date.slice(5)}</span>
-      <span class="tag-chip" style="background:${catColor[a.category] || '#666'}">${a.category}</span>
-      <span class="t"><a href="${a.link}" target="_blank" rel="noopener">${a.title}</a></span>
-      <span class="src">${a.source || ''}</span>
-      ${STATIC_MODE ? '' : `<button class="done-btn" onclick="markAlert(${a.id}, ${a.handled ? 0 : 1})">${a.handled ? '↩ 復原' : '✓ 已處理'}</button>`}
-    </div>`).join('') || '<div class="muted" style="padding:20px">目前沒有符合條件的警訊 🎉</div>';
+  // 排序：產發署直接相關優先，其次日期新→舊
+  const visible = groupList.filter(g =>
+    (!alertCatFilter || g[0].category === alertCatFilter) &&
+    (showHandled || g.some(a => !a.handled)));
+  visible.sort((g1, g2) => {
+    const imp = Math.max(...g2.map(a => a.importance)) - Math.max(...g1.map(a => a.importance));
+    if (imp) return imp;
+    return g2[0].pub_date.localeCompare(g1[0].pub_date);
+  });
+
+  document.getElementById('alertList').innerHTML = visible.slice(0, 80).map(g => {
+    const lead = g[0];
+    const gid = lead.group;
+    const unDone = g.filter(a => !a.handled);
+    const allDone = unDone.length === 0;
+    const isVip = g.some(a => a.importance === 2);
+    const ids = JSON.stringify(g.map(a => a.id));
+    const doneBtn = STATIC_MODE ? '' : (allDone
+      ? `<button class="done-btn" onclick='markAlert(${ids}, 0)'>↩ 復原</button>`
+      : `<button class="done-btn" onclick='markAlert(${ids}, 1)'>✓ ${g.length > 1 ? '整批已處理' : '已處理'}</button>`);
+    const expandBtn = g.length > 1
+      ? `<span class="group-count" onclick="toggleGroup(${gid})">${expandedGroups.has(gid) ? '▾' : '▸'} ${g.length} 則報導</span>` : '';
+    const sub = (g.length > 1 && expandedGroups.has(gid))
+      ? `<div class="group-sub">` + g.map(a => `
+          <div class="alert-row${a.handled ? ' done' : ''}" style="border-bottom:none;padding:4px 0">
+            <span class="date">${a.pub_date.slice(5)}</span>
+            <span class="src">${a.source || ''}</span>
+            <span class="t"><a href="${a.link}" target="_blank" rel="noopener">${a.title}</a></span>
+          </div>`).join('') + `</div>` : '';
+    return `
+    <div class="alert-row${allDone ? ' done' : ''}${isVip ? ' vip' : ''}">
+      <span class="date">${lead.pub_date.slice(5)}</span>
+      <span class="tag-chip" style="background:${catColor[lead.category] || '#666'}">${lead.category}</span>
+      ${isVip ? '<span class="vip-tag">產發署相關</span>' : ''}
+      <span class="t"><a href="${lead.link}" target="_blank" rel="noopener">${lead.title}</a> ${expandBtn}</span>
+      <span class="src">${lead.source || ''}</span>
+      ${doneBtn}
+    </div>${sub}`;
+  }).join('') || '<div class="muted" style="padding:20px">目前沒有符合條件的警訊 🎉</div>';
+}
+
+function toggleGroup(gid) {
+  expandedGroups.has(gid) ? expandedGroups.delete(gid) : expandedGroups.add(gid);
+  renderAlerts();
 }
 
 function renderAlertCharts() {
@@ -522,7 +646,7 @@ function renderAlertCharts() {
   // 近 14 天日期軸
   const days = [];
   for (let i = 13; i >= 0; i--) {
-    days.push(new Date(Date.now() - i * 86400e3).toISOString().slice(0, 10));
+    days.push(localYMD(new Date(Date.now() - i * 86400e3)));
   }
   const idx = {};
   days.forEach((d, i) => idx[d] = i);
@@ -574,16 +698,29 @@ function renderAlertCharts() {
   });
 }
 
-async function markAlert(id, handled) {
+let toastTimer = null;
+function showToast(msg, undoFn) {
+  const t = document.getElementById('toast');
+  t.innerHTML = msg + (undoFn ? ' <button id="toastUndo">復原</button>' : '');
+  t.hidden = false;
+  if (undoFn) document.getElementById('toastUndo').onclick = () => { t.hidden = true; undoFn(); };
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.hidden = true, 6000);
+}
+
+async function markAlert(ids, handled) {
+  if (!Array.isArray(ids)) ids = [ids];
   try {
     await fetch('/api/alert_done', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ id, handled }),
+      body: JSON.stringify({ ids, handled }),
     });
-    const a = ALERTS.articles.find(x => x.id === id);
-    if (a) a.handled = handled;
+    ALERTS.articles.forEach(a => { if (ids.includes(a.id)) a.handled = handled; });
     renderAlerts();
+    if (handled) {
+      showToast(`已歸檔 ${ids.length} 則`, () => markAlert(ids, 0));
+    }
   } catch (e) {
     alert('更新失敗：' + e);
   }
@@ -608,22 +745,86 @@ function renderTable() {
   document.getElementById('articleBody').innerHTML = rows || '<tr><td colspan="5" class="muted">沒有符合的資料</td></tr>';
 }
 
+// 背景更新：送出後輪詢進度，期間頁面照常可用，關掉重開也會接續顯示
+let pollTimer = null;
+
 async function refresh() {
-  const btn = document.getElementById('refreshBtn');
-  btn.disabled = true; btn.textContent = '⏳ 抓取中（約 2～4 分鐘）…';
   try {
-    const res = await fetch('/api/refresh', { method: 'POST' });
-    const r = await res.json();
-    if (!r.ok) alert('更新時發生問題：' + r.output);
-    await load();
+    await fetch('/api/refresh', { method: 'POST' });
+    pollRefresh();
   } catch (e) {
     alert('更新失敗：' + e);
-  } finally {
-    btn.disabled = false; btn.textContent = '🔄 立即更新資料';
   }
 }
 
-load();
+async function pollRefresh() {
+  const btn = document.getElementById('refreshBtn');
+  clearInterval(pollTimer);
+  pollTimer = setInterval(async () => {
+    try {
+      const s = await (await fetch('/api/refresh_status')).json();
+      if (s.running) {
+        btn.disabled = true;
+        btn.textContent = `⏳ ${s.stage}`;
+      } else {
+        clearInterval(pollTimer);
+        btn.disabled = false;
+        btn.textContent = '🔄 立即更新資料';
+        if (s.finished_at) {
+          await load();
+          showToast(s.ok ? '✅ 資料更新完成' : '⚠️ 更新完成但部分失敗，詳見 logs');
+        }
+      }
+    } catch (e) { /* 伺服器暫時沒回應，下一輪再試 */ }
+  }, 3000);
+}
+
+async function checkRefreshOnLoad() {
+  if (STATIC_MODE) return;
+  try {
+    const s = await (await fetch('/api/refresh_status')).json();
+    if (s.running) pollRefresh();  // 上次更新還在跑（例如中途關過頁面）
+  } catch (e) {}
+}
+
+// ---- CSV 匯出（Excel 可直接開啟）----
+function downloadCSV(name, rows) {
+  const csv = '\ufeff' + rows.map(r =>
+    r.map(v => `"${String(v ?? '').replace(/"/g, '""')}"`).join(',')).join('\r\n');
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+  a.download = `${name}_${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+}
+
+function exportOverview() {
+  downloadCSV('聲量新聞清單', [['日期', '標籤', '標題', '來源', '語氣', '連結']]
+    .concat(DATA.articles.map(a => [a.pub_date, a.tag, a.title, a.source, a.sentiment, a.link])));
+}
+
+function exportPR() {
+  const rows = [['發布日', '新聞稿標題', 'D0', 'D+1', 'D+2', 'D+3', '總報導', '媒體數', '發稿記者', '報導日期', '原始媒體', '轉載平台', '記者', '報導標題', '報導連結']];
+  PRDATA.press_releases.forEach(p => {
+    if (!p.articles.length) {
+      rows.push([p.release_date, p.title, ...p.counts, p.total, p.media, (p.reporters || []).join('、')]);
+    }
+    p.articles.forEach(a => rows.push([
+      p.release_date, p.title, ...p.counts, p.total, p.media, (p.reporters || []).join('、'),
+      a.pub_date, a.outlet || '', a.source || '', a.reporter || '', a.title, a.resolved_url || a.link,
+    ]));
+  });
+  downloadCSV('新聞稿擴散', rows);
+}
+
+function exportAlerts() {
+  const showHandled = document.getElementById('showHandled').checked;
+  const list = ALERTS.articles.filter(a =>
+    (!alertCatFilter || a.category === alertCatFilter) && (showHandled || !a.handled));
+  downloadCSV('負面警訊', [['日期', '類別', '直接相關', '標題', '來源', '狀態', '連結']]
+    .concat(list.map(a => [a.pub_date, a.category, a.importance === 2 ? '是' : '', a.title, a.source, a.handled ? '已處理' : '待處理', a.link])));
+}
+
+load().then(checkRefreshOnLoad);
 </script>
 </body>
 </html>

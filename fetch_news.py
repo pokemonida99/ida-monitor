@@ -151,16 +151,18 @@ def main() -> int:
     print(f"[{now_iso}] 新增 {total_new} 則，狀態：{note}")
 
     # 接著更新新聞稿擴散追蹤與負面警訊
-    try:
-        import fetch_pr
-        fetch_pr.main()
-    except Exception as e:
-        print(f"新聞稿追蹤更新失敗：{e}", file=sys.stderr)
-    try:
-        import fetch_alerts
-        fetch_alerts.main()
-    except Exception as e:
-        print(f"負面警訊更新失敗：{e}", file=sys.stderr)
+    # （--only 時跳過：伺服器的分段更新會自己依序執行各腳本）
+    if "--only" not in sys.argv:
+        try:
+            import fetch_pr
+            fetch_pr.main()
+        except Exception as e:
+            print(f"新聞稿追蹤更新失敗：{e}", file=sys.stderr)
+        try:
+            import fetch_alerts
+            fetch_alerts.main()
+        except Exception as e:
+            print(f"負面警訊更新失敗：{e}", file=sys.stderr)
 
     return 0 if not errors else 1
 

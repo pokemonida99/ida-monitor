@@ -12,9 +12,12 @@ import json
 import sqlite3
 import subprocess
 import sys
+import threading
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+
+from fetch_pr import _bigrams
 
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data.db"
@@ -173,8 +176,14 @@ def build_pr_summary() -> dict:
 
 
 def build_alerts() -> dict:
-    """負面警訊：近 14 天需注意的新聞，提醒撰寫輿情。"""
-    rules = json.loads((BASE_DIR / "alert_rules.json").read_text(encoding="utf-8"))["categories"]
+    """負面警訊：近 14 天需注意的新聞，提醒撰寫輿情。
+
+    每則附上重要度（標題含產發署直接相關詞 = 2，一般產業 = 1）
+    與事件群組編號（標題高度相似的報導聚合成同一事件，方便整批處理）。
+    """
+    cfg = json.loads((BASE_DIR / "alert_rules.json").read_text(encoding="utf-8"))
+    rules = cfg["categories"]
+    priority_words = cfg.get("priority_words", [])
     start = (datetime.now(TAIPEI_TZ).date() - timedelta(days=14)).strftime("%Y-%m-%d")
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -184,11 +193,69 @@ def build_alerts() -> dict:
         (start,),
     ).fetchall()
     conn.close()
+
+    articles = []
+    clusters = []  # [{"category", "bg", "group"}]
+    for r in rows:
+        a = dict(r)
+        a["importance"] = 2 if any(w in a["title"] for w in priority_words) else 1
+        bg = _bigrams(a["title"])
+        group = None
+        for cl in clusters:
+            if cl["category"] != a["category"]:
+                continue
+            base = min(len(bg), len(cl["bg"])) or 1
+            if len(bg & cl["bg"]) / base >= 0.55:
+                group = cl["group"]
+                break
+        if group is None:
+            group = len(clusters)
+            clusters.append({"category": a["category"], "bg": bg, "group": group})
+        a["group"] = group
+        articles.append(a)
+
     return {
         "generated_at": datetime.now(TAIPEI_TZ).isoformat(timespec="seconds"),
         "categories": [{"category": r["category"], "color": r["color"]} for r in rules],
-        "articles": [dict(r) for r in rows],
+        "articles": articles,
     }
+
+
+# 背景更新狀態（單一程序內共享）
+REFRESH = {
+    "running": False, "stage": "", "ok": None,
+    "started_at": None, "finished_at": None, "output": "",
+}
+REFRESH_LOCK = threading.Lock()
+
+
+def _run_refresh():
+    stages = [
+        ("聲量資料（約 1～2 分鐘）", "fetch_news.py", ["--only"]),
+        ("新聞稿擴散（約 1 分鐘）", "fetch_pr.py", []),
+        ("負面警訊（約 30 秒）", "fetch_alerts.py", []),
+    ]
+    outputs = []
+    ok = True
+    for i, (name, script, args) in enumerate(stages, 1):
+        REFRESH["stage"] = f"[{i}/3] {name}"
+        try:
+            proc = subprocess.run(
+                [sys.executable, str(BASE_DIR / script), *args],
+                capture_output=True, text=True, timeout=600,
+            )
+            outputs.append(proc.stdout.strip())
+            if proc.returncode != 0:
+                outputs.append(proc.stderr.strip())
+                ok = False
+        except Exception as e:
+            outputs.append(f"{name} 失敗：{e}")
+            ok = False
+    REFRESH.update(
+        running=False, ok=ok, stage="完成" if ok else "部分失敗",
+        finished_at=datetime.now(TAIPEI_TZ).isoformat(timespec="seconds"),
+        output="\n".join(o for o in outputs if o),
+    )
 
 
 class Handler(BaseHTTPRequestHandler):
@@ -222,6 +289,8 @@ class Handler(BaseHTTPRequestHandler):
                 self._send_json(build_alerts())
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
+        elif self.path.startswith("/api/refresh_status"):
+            self._send_json(REFRESH)
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -230,28 +299,32 @@ class Handler(BaseHTTPRequestHandler):
             try:
                 length = int(self.headers.get("Content-Length", 0))
                 data = json.loads(self.rfile.read(length))
+                ids = data.get("ids") or [data["id"]]
+                handled = 1 if data.get("handled") else 0
+                handled_at = (datetime.now(TAIPEI_TZ).isoformat(timespec="seconds")
+                              if handled else None)
                 conn = sqlite3.connect(DB_PATH)
-                conn.execute(
-                    "UPDATE alert_articles SET handled = ? WHERE id = ?",
-                    (1 if data.get("handled") else 0, int(data["id"])),
+                conn.executemany(
+                    "UPDATE alert_articles SET handled = ?, handled_at = ? WHERE id = ?",
+                    [(handled, handled_at, int(i)) for i in ids],
                 )
                 conn.commit()
                 conn.close()
-                self._send_json({"ok": True})
+                self._send_json({"ok": True, "count": len(ids)})
             except Exception as e:
                 self._send_json({"ok": False, "error": str(e)}, 500)
         elif self.path == "/api/refresh":
-            try:
-                proc = subprocess.run(
-                    [sys.executable, str(BASE_DIR / "fetch_news.py")],
-                    capture_output=True, text=True, timeout=600,
+            with REFRESH_LOCK:
+                if REFRESH["running"]:
+                    self._send_json({"started": False, "running": True})
+                    return
+                REFRESH.update(
+                    running=True, ok=None, stage="準備中…", output="",
+                    started_at=datetime.now(TAIPEI_TZ).isoformat(timespec="seconds"),
+                    finished_at=None,
                 )
-                self._send_json({
-                    "ok": proc.returncode == 0,
-                    "output": (proc.stdout + proc.stderr).strip(),
-                })
-            except Exception as e:
-                self._send_json({"ok": False, "output": str(e)}, 500)
+                threading.Thread(target=_run_refresh, daemon=True).start()
+            self._send_json({"started": True})
         else:
             self._send(404, b"not found", "text/plain")
 
@@ -260,9 +333,13 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
-    port = int(sys.argv[1]) if len(sys.argv) > 1 else 8765
-    server = ThreadingHTTPServer(("127.0.0.1", port), Handler)
-    print(f"輿情觀測器已啟動：http://127.0.0.1:{port}")
+    args = [a for a in sys.argv[1:] if a != "--lan"]
+    port = int(args[0]) if args else 8765
+    # --lan：開放同一內網的同仁連線（例如 http://你的內網IP:8765）
+    host = "0.0.0.0" if "--lan" in sys.argv else "127.0.0.1"
+    server = ThreadingHTTPServer((host, port), Handler)
+    scope = "內網共用" if host == "0.0.0.0" else "僅本機"
+    print(f"輿情觀測器已啟動（{scope}）：http://127.0.0.1:{port}")
     server.serve_forever()
 
 

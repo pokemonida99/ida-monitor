@@ -46,6 +46,10 @@ def init_db(conn: sqlite3.Connection) -> None:
         CREATE INDEX IF NOT EXISTS idx_alerts_date ON alert_articles(pub_date);
         """
     )
+    # 舊資料庫升級
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(alert_articles)")}
+    if "handled_at" not in cols:
+        conn.execute("ALTER TABLE alert_articles ADD COLUMN handled_at TEXT")
     conn.commit()
 
 
