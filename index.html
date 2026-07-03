@@ -45,7 +45,7 @@
   .card {
     background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 18px;
   }
-  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--muted); }
+  .card h2 { font-size: 15px; font-weight: 600; margin-bottom: 12px; color: var(--muted); overflow: hidden; }
   .chart-wrap { position: relative; height: 320px; }
   .chart-wrap.sm { height: 260px; }
   .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
@@ -138,14 +138,59 @@
   #methodModal h4 { margin: 14px 0 4px; color: var(--accent); font-size: 14px; }
   #methodModal .close { float: right; background: none; border: none; color: var(--muted); font-size: 20px; cursor: pointer; }
   a.method-link { color: var(--muted); text-decoration: underline; cursor: pointer; }
-  @media (max-width: 700px) {
-    .alert-row { flex-wrap: wrap; }
-    .alert-row .t { flex-basis: 100%; order: 5; }
-  }
   .pr-art { display: flex; gap: 10px; padding: 4px 0; font-size: 13px; }
   .pr-art .d { color: var(--accent); min-width: 36px; font-weight: 600; }
   .pr-art .s { color: var(--muted); min-width: 110px; }
   @media (max-width: 900px) { .grid, .grid2 { grid-template-columns: 1fr; } }
+
+  /* ---- 手機版（≤700px）---- */
+  @media (max-width: 700px) {
+    body { padding: 12px; }
+    h1 { font-size: 18px; }
+    header { gap: 8px; }
+    button#refreshBtn { padding: 8px 14px; font-size: 13px; }
+    .tabs { overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .tab-btn { padding: 10px 10px; font-size: 13px; white-space: nowrap; }
+    .kpis { grid-template-columns: repeat(2, 1fr); gap: 10px; }
+    .kpi { padding: 12px 14px; }
+    .kpi .value { font-size: 22px; }
+    .chart-wrap { height: 250px; }
+    .chart-wrap.sm { height: 210px; }
+    .card { padding: 14px; }
+    .table-wrap { max-height: none; }
+
+    /* 警訊列：標題獨立一行 */
+    .alert-row { flex-wrap: wrap; gap: 6px 10px; }
+    .alert-row .t { flex-basis: 100%; order: 5; font-size: 15px; line-height: 1.5; }
+    .alert-row .src { min-width: 0; }
+    .group-sub { margin-left: 14px; }
+
+    /* 最新新聞表格 → 卡片式 */
+    #articleBody { display: block; }
+    .table-wrap thead { display: none; }
+    #articleBody tr { display: flex; flex-wrap: wrap; gap: 4px 10px; align-items: center;
+      padding: 10px 0; border-bottom: 1px solid var(--border); }
+    #articleBody td { display: block; border: none; padding: 0; }
+    #articleBody td:nth-child(3) { flex-basis: 100%; order: 9; font-size: 15px; line-height: 1.5; }
+
+    /* 新聞稿清單 → 卡片式：隱藏 D0~D3 欄，總數加文字標籤 */
+    #tab-pr table { display: block; width: 100%; }
+    #prBody { display: block; width: 100%; }
+    #prBody tr.pr-row { display: flex; flex-wrap: wrap; gap: 4px 12px; align-items: center;
+      padding: 10px 0; border-bottom: 1px solid var(--border); }
+    #prBody tr.pr-row td { display: block; border: none; padding: 0; }
+    #prBody tr.pr-row td:nth-child(2) { flex-basis: 100%; order: -1; font-size: 15px; line-height: 1.5; }
+    #prBody tr.pr-row td:nth-child(n+3):nth-child(-n+6) { display: none; }
+    #prBody tr.pr-row td:nth-child(7)::before { content: "報導 "; color: var(--muted); font-size: 12px; font-weight: 400; }
+    #prBody tr.pr-row td:nth-child(8)::before { content: "媒體 "; color: var(--muted); font-size: 12px; font-weight: 400; }
+    #prBody tr.pr-row td:nth-child(9)::before { content: "記者 "; color: var(--muted); font-size: 12px; font-weight: 400; }
+    #prBody tr.pr-detail { display: block; }
+    #prBody tr.pr-detail td { display: block; }
+    .pr-art { flex-wrap: wrap; }
+    .pr-art .s { min-width: 0; }
+
+    #methodModal .box { padding: 18px 16px; }
+  }
 </style>
 </head>
 <body>
@@ -497,7 +542,10 @@ function renderPR() {
   charts.pr = new Chart(document.getElementById('prChart'), {
     type: 'bar',
     data: {
-      labels: chartPrs.map(p => `${p.release_date.slice(5)}｜${p.title.slice(0, 16)}…`),
+      labels: chartPrs.map(p => {
+        const len = window.innerWidth < 700 ? 6 : 16;  // 手機上縮短，留空間給長條
+        return `${p.release_date.slice(5)}｜${p.title.slice(0, len)}…`;
+      }),
       datasets: OFFSET_LABELS.map((lab, i) => ({
         label: lab,
         data: chartPrs.map(p => p.counts[i]),
