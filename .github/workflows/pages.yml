@@ -1,0 +1,56 @@
+name: 更新輿情資料並發布儀表板
+
+on:
+  schedule:
+    # UTC 00/04/08/12 = 台北 08:00 / 12:00 / 16:00 / 20:00
+    - cron: '0 0,4,8,12 * * *'
+  workflow_dispatch:   # 也可在 Actions 頁面手動觸發
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - uses: actions/checkout@v4
+
+      # data.db 用 cache 在執行之間傳遞，聲量歷史才能累積超過 30 天
+      - name: 還原歷史資料庫
+        uses: actions/cache/restore@v4
+        with:
+          path: data.db
+          key: newsdb-${{ github.run_id }}
+          restore-keys: newsdb-
+
+      - name: 抓取資料（聲量＋新聞稿擴散＋負面警訊）
+        run: python3 fetch_news.py || echo "部分查詢失敗，以現有資料繼續"
+
+      - name: 儲存資料庫
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: data.db
+          key: newsdb-${{ github.run_id }}
+
+      - name: 匯出靜態儀表板
+        run: python3 export_static.py public
+
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: public
+      - name: 發布到 GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
