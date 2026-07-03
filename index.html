@@ -174,12 +174,14 @@
           <th class="offset-cell" style="width:56px">D+3</th>
           <th class="offset-cell" style="width:70px">總報導</th>
           <th class="offset-cell" style="width:70px">媒體數</th>
+          <th class="offset-cell" style="width:70px">記者數</th>
         </tr></thead>
         <tbody id="prBody"></tbody>
       </table>
     </div>
     <p class="muted" style="font-size:12px;margin-top:10px">
-      報導數為 Google News 中與新聞稿標題高度相關的新聞則數；媒體數為發出報導的不同媒體家數。
+      報導數為 Google News 中與新聞稿標題高度相關的新聞則數；媒體數以原始媒體（報社／通訊社）計算，
+      轉載平台（Yahoo、LINE TODAY 等）會標出原始出處；記者姓名從文章內文自動解析，部分文章無署名。
       新聞稿發布後 10 天內每次排程都會回補，之後定格。
     </p>
   </div>
@@ -194,10 +196,17 @@ let charts = {};
 
 const fmtDate = d => d.slice(5); // MM-DD
 
+let prRendered = false;
+
 function switchTab(name) {
   document.querySelectorAll('.tab-btn').forEach(b => b.classList.toggle('active', b.dataset.tab === name));
   document.getElementById('tab-overview').hidden = name !== 'overview';
   document.getElementById('tab-pr').hidden = name !== 'pr';
+  // 圖表必須等頁籤顯示後才建立，否則畫布拿不到尺寸
+  if (name === 'pr' && PRDATA && !prRendered) {
+    renderPR();
+    prRendered = true;
+  }
 }
 
 let STATIC_MODE = false;
@@ -217,7 +226,11 @@ async function load() {
     document.getElementById('refreshBtn').style.display = 'none';
   }
   render();
-  renderPR();
+  prRendered = false;
+  if (!document.getElementById('tab-pr').hidden) {
+    renderPR();
+    prRendered = true;
+  }
 }
 
 function render() {
@@ -354,12 +367,21 @@ function renderPR() {
   document.getElementById('prBody').innerHTML = recent.map((p, idx) => {
     const cells = p.counts.map(c =>
       `<td class="offset-cell"><span class="offset-badge${c > 0 ? ' hot' : ''}">${c}</span></td>`).join('');
-    const arts = p.articles.map(a => `
+    const arts = p.articles.map(a => {
+      // 媒體標示：原始媒體優先；若與轉載平台不同，並列顯示
+      let mediaLabel = a.outlet || a.source || '－';
+      if (a.outlet && a.source && a.outlet !== a.source) mediaLabel = `${a.outlet}<span class="muted">（${a.source}）</span>`;
+      const rep = a.reporter ? `<span style="color:var(--pos)">✍ ${a.reporter}</span>` : '<span class="muted">記者不明</span>';
+      return `
       <div class="pr-art">
         <span class="d">D${a.day_offset === 0 ? '0' : '+' + a.day_offset}</span>
-        <span class="s">${a.source || '－'}</span>
-        <a href="${a.link}" target="_blank" rel="noopener">${a.title}</a>
-      </div>`).join('') || '<span class="muted">尚未搜到相關報導</span>';
+        <span class="s">${mediaLabel}</span>
+        <span style="min-width:90px">${rep}</span>
+        <a href="${a.resolved_url || a.link}" target="_blank" rel="noopener">${a.title}</a>
+      </div>`;
+    }).join('') || '<span class="muted">尚未搜到相關報導</span>';
+    const repSummary = p.reporters && p.reporters.length
+      ? `<div style="margin-bottom:8px;font-size:13px"><span class="muted">發稿記者：</span><span style="color:var(--pos)">${p.reporters.join('、')}</span></div>` : '';
     return `
       <tr class="pr-row" onclick="togglePR(${idx})">
         <td class="muted">${p.release_date.slice(5)}</td>
@@ -367,9 +389,10 @@ function renderPR() {
         ${cells}
         <td class="offset-cell" style="font-weight:700">${p.total}</td>
         <td class="offset-cell" style="font-weight:700">${p.media}</td>
+        <td class="offset-cell" style="font-weight:700;color:var(--pos)">${(p.reporters||[]).length}</td>
       </tr>
-      <tr class="pr-detail" id="prDetail${idx}" hidden><td colspan="8">${arts}</td></tr>`;
-  }).join('') || '<tr><td colspan="8" class="muted">尚無新聞稿資料</td></tr>';
+      <tr class="pr-detail" id="prDetail${idx}" hidden><td colspan="9">${repSummary}${arts}</td></tr>`;
+  }).join('') || '<tr><td colspan="9" class="muted">尚無新聞稿資料</td></tr>';
 }
 
 function togglePR(idx) {

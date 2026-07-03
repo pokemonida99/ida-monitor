@@ -17,7 +17,7 @@ if ! "$PYTHON" --version >/dev/null 2>&1; then
 fi
 
 mkdir -p "$DEST/logs"
-cp "$SRC"/{fetch_news.py,fetch_pr.py,server.py,export_static.py,index.html,tags.json} "$DEST/"
+cp "$SRC"/{fetch_news.py,fetch_pr.py,enrich.py,server.py,export_static.py,index.html,tags.json} "$DEST/"
 # 資料庫只在目的地不存在時才複製，避免覆蓋累積的歷史資料
 [ -f "$DEST/data.db" ] || { [ -f "$SRC/data.db" ] && cp "$SRC/data.db" "$DEST/"; }
 

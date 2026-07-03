@@ -135,17 +135,24 @@ def build_pr_summary() -> dict:
     result = []
     for pr in prs:
         arts = conn.execute(
-            "SELECT title, link, source, pub_date, day_offset FROM pr_articles "
-            "WHERE pr_id = ? ORDER BY day_offset, source",
+            "SELECT title, link, source, pub_date, day_offset, "
+            "resolved_url, outlet, reporter FROM pr_articles "
+            "WHERE pr_id = ? ORDER BY day_offset, outlet, source",
             (pr["id"],),
         ).fetchall()
         counts = [0, 0, 0, 0]
-        sources = set()
+        media = set()
+        reporters = []
         for a in arts:
             if 0 <= a["day_offset"] <= 3:
                 counts[a["day_offset"]] += 1
-            if a["source"]:
-                sources.add(a["source"])
+            m = a["outlet"] or a["source"]
+            if m:
+                media.add(m)
+            if a["reporter"]:
+                for name in a["reporter"].split("、"):
+                    if name not in reporters:
+                        reporters.append(name)
         result.append({
             "id": pr["id"],
             "title": pr["title"],
@@ -154,7 +161,8 @@ def build_pr_summary() -> dict:
             "release_date": pr["release_date"],
             "counts": counts,
             "total": len(arts),
-            "media": len(sources),
+            "media": len(media),
+            "reporters": reporters,
             "articles": [dict(a) for a in arts],
         })
     conn.close()

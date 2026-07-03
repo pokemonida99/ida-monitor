@@ -61,10 +61,18 @@ def init_db(conn: sqlite3.Connection) -> None:
             pub_date TEXT,                   -- YYYY-MM-DD
             day_offset INTEGER,              -- 0=發布當天, 1=隔天...
             fetched_at TEXT,
+            resolved_url TEXT,               -- 解碼後的原始文章網址
+            outlet TEXT,                     -- 原始媒體（報社/通訊社）
+            reporter TEXT,                   -- 記者姓名
             UNIQUE(pr_id, link)
         );
         """
     )
+    # 舊資料庫升級
+    cols = {r[1] for r in conn.execute("PRAGMA table_info(pr_articles)")}
+    for col in ("resolved_url", "outlet", "reporter"):
+        if col not in cols:
+            conn.execute(f"ALTER TABLE pr_articles ADD COLUMN {col} TEXT")
     conn.commit()
 
 
@@ -136,15 +144,18 @@ def is_relevant(article_title: str, quoted, terms, pr_core: str) -> bool:
 
 def build_queries(quoted, terms):
     """一則新聞稿發多組查詢擴大召回：
-    引號詞組單獨查（活動/計畫名最準），關鍵字塊兩兩配對查（寬鬆）。"""
+    引號詞組單獨查（活動/計畫名最準），關鍵字塊兩兩配對查，
+    再加上較長的單一關鍵字塊（最寬，不相關的靠 is_relevant 過濾）。"""
     queries = [f'"{q}"' for q in quoted]
     if len(terms) >= 2:
         queries.append(f"{terms[0]} {terms[1]}")
         if len(terms) >= 3:
             queries.append(f"{terms[0]} {terms[2]}")
-    elif terms:
-        queries.append(terms[0])
-    return queries[:4]
+            queries.append(f"{terms[1]} {terms[2]}")
+    for t in terms:
+        if len(t) >= 4:
+            queries.append(t)
+    return queries[:7]
 
 
 def search_coverage(pr_title: str, release: date):
@@ -217,7 +228,7 @@ def main() -> int:
     # 回補對象：仍在觀測期內（發布後 OBSERVE_DAYS 天）的新聞稿，
     # 加上 30 天內從未搜尋過的（首次執行時做一次性回補，Google News 約保留 30 天）
     cutoff = (today - timedelta(days=OBSERVE_DAYS)).strftime("%Y-%m-%d")
-    month_ago = (today - timedelta(days=30)).strftime("%Y-%m-%d")
+    month_ago = (today - timedelta(days=40)).strftime("%Y-%m-%d")
     active = conn.execute(
         "SELECT id, title, release_date FROM press_releases "
         "WHERE release_date >= ? OR (release_date >= ? AND last_checked IS NULL)",
@@ -254,8 +265,34 @@ def main() -> int:
         conn.commit()
         time.sleep(1)
 
+    # 解析新報導的原始媒體與記者（每次最多 60 篇，避免單次執行過久）
+    from enrich import enrich_article
+    pending = conn.execute(
+        "SELECT id, link, source FROM pr_articles WHERE resolved_url IS NULL LIMIT 60"
+    ).fetchall()
+    enriched = 0
+    for row_id, link, source in pending:
+        try:
+            url, outlet, reporter = enrich_article(link, source)
+        except Exception:
+            url, outlet, reporter = link, source, None
+        conn.execute(
+            "UPDATE pr_articles SET resolved_url = ?, outlet = ?, reporter = ? WHERE id = ?",
+            (url, outlet, reporter, row_id),
+        )
+        conn.commit()
+        enriched += 1
+        time.sleep(1)
+
+    # 同一篇報導（同媒體＋同標題）解析後可能發現重複，只留一筆
+    conn.execute(
+        "DELETE FROM pr_articles WHERE id NOT IN ("
+        "SELECT MIN(id) FROM pr_articles GROUP BY pr_id, COALESCE(outlet, source), title)"
+    )
+    conn.commit()
     conn.close()
-    print(f"[{now_iso}] 新聞稿 {len(prs)} 則（觀測中 {len(active)}），新增報導 {new_count} 則")
+    print(f"[{now_iso}] 新聞稿 {len(prs)} 則（觀測中 {len(active)}），"
+          f"新增報導 {new_count} 則，解析媒體/記者 {enriched} 篇")
     return 0
 
 
