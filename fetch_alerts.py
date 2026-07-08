@@ -19,6 +19,8 @@ from datetime import datetime, timezone, timedelta
 from email.utils import parsedate_to_datetime
 from pathlib import Path
 
+import enrich
+
 BASE_DIR = Path(__file__).resolve().parent
 DB_PATH = BASE_DIR / "data.db"
 RULES_PATH = BASE_DIR / "alert_rules.json"
@@ -80,8 +82,11 @@ def main() -> int:
     conn = sqlite3.connect(DB_PATH)
     init_db(conn)
     now_iso = datetime.now(TAIPEI_TZ).isoformat(timespec="seconds")
+    window_start = (datetime.now(TAIPEI_TZ).date()
+                    - timedelta(days=WINDOW_DAYS)).strftime("%Y-%m-%d")
 
     new_count = 0
+    stale_count = 0
     errors = []
     for rule in rules:
         cat = rule["category"]
@@ -106,6 +111,17 @@ def main() -> int:
                 # 部分類別（如立委質疑）需再含產業相關詞，排除一般政治新聞
                 if topic_triggers and not any(t in title for t in topic_triggers):
                     continue
+                # RSS 的 pubDate 偶爾是 Google 重新收錄日而非原始發布日
+                # （舊聞回鍋），向原文站查證；差兩天以上以原文為準
+                real_date = enrich.verify_pub_date(link)
+                if real_date and abs(
+                    (datetime.strptime(real_date, "%Y-%m-%d")
+                     - datetime.strptime(pub_date, "%Y-%m-%d")).days
+                ) > 2:
+                    pub_date = real_date
+                if pub_date < window_start:  # 舊聞不當成新警訊
+                    stale_count += 1
+                    continue
                 cur = conn.execute(
                     "INSERT OR IGNORE INTO alert_articles "
                     "(category, title, link, source, pub_date, fetched_at) "
@@ -120,7 +136,8 @@ def main() -> int:
 
     conn.close()
     note = "; ".join(errors) if errors else "ok"
-    print(f"[{now_iso}] 負面警訊新增 {new_count} 則，狀態：{note}")
+    stale_note = f"，剔除舊聞 {stale_count} 則" if stale_count else ""
+    print(f"[{now_iso}] 負面警訊新增 {new_count} 則{stale_note}，狀態：{note}")
     return 0 if not errors else 1
 
 

@@ -102,6 +102,47 @@ def normalize_outlet(name):
     return OUTLET_ALIASES.get(name, name)
 
 
+# 文章頁面上「發布時間」的標記（meta 或 JSON-LD）
+PUBLISHED_PATTERNS = [
+    r'property=["\']article:published_time["\'][^>]*content=["\']([^"\']+)',
+    r'content=["\']([^"\']+)["\'][^>]*property=["\']article:published_time',
+    r'"datePublished"\s*:\s*"([^"]+)"',
+    r'itemprop=["\']datePublished["\'][^>]*content=["\']([^"\']+)',
+    r'name=["\']pubdate["\'][^>]*content=["\']([^"\']+)',
+]
+
+
+def published_date_from_html(html: str):
+    """從文章頁面抽出原始發布日（YYYY-MM-DD 字串），找不到回傳 None。"""
+    for p in PUBLISHED_PATTERNS:
+        m = re.search(p, html[:120000])
+        if not m:
+            continue
+        raw = m.group(1).strip()
+        m2 = re.search(r"(\d{4})[-/年.](\d{1,2})[-/月.](\d{1,2})", raw)
+        if m2:
+            return "%04d-%02d-%02d" % tuple(int(x) for x in m2.groups())
+    return None
+
+
+def verify_pub_date(gnews_url: str):
+    """解析 Google News 連結並讀取原文頁面的實際發布日。
+
+    Google News RSS 的 pubDate 偶爾是「重新收錄日」而非原始發布日
+    （舊聞回鍋），需要向原文站查證。任一步失敗回傳 None（維持 RSS 日期）。
+    """
+    url = resolve_gnews_link(gnews_url)
+    if url == gnews_url:
+        return None
+    try:
+        req = urllib.request.Request(url, headers=UA)
+        with urllib.request.urlopen(req, timeout=20) as r:
+            html = r.read().decode("utf-8", errors="ignore")
+    except Exception:
+        return None
+    return published_date_from_html(html)
+
+
 def resolve_gnews_link(gnews_url: str, timeout: int = 20) -> str:
     """把 Google News RSS 連結解碼成原始文章網址；失敗時回傳原連結。"""
     m = re.search(r"articles/([^?/]+)", gnews_url)
