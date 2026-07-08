@@ -13,6 +13,7 @@ import sqlite3
 import subprocess
 import sys
 import threading
+import urllib.parse
 from datetime import datetime, timezone, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -28,12 +29,28 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 DAYS = 30
 
 
-def build_summary() -> dict:
+def _parse_date(s):
+    try:
+        return datetime.strptime(s, "%Y-%m-%d").date()
+    except (TypeError, ValueError):
+        return None
+
+
+def build_summary(start=None, end=None) -> dict:
+    """start/end 為 YYYY-MM-DD 字串；未指定則預設近 30 天。"""
     tags_cfg = json.loads(TAGS_PATH.read_text(encoding="utf-8"))["tags"]
 
     today = datetime.now(TAIPEI_TZ).date()
-    dates = [(today - timedelta(days=i)).strftime("%Y-%m-%d") for i in range(DAYS - 1, -1, -1)]
+    end_d = _parse_date(end) or today
+    start_d = _parse_date(start) or end_d - timedelta(days=DAYS - 1)
+    if start_d > end_d:
+        start_d, end_d = end_d, start_d
+    if (end_d - start_d).days > 366:  # 上限一年，避免回應過大
+        start_d = end_d - timedelta(days=366)
+    n = (end_d - start_d).days + 1
+    dates = [(start_d + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(n)]
     start = dates[0]
+    end_s = dates[-1]
 
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
@@ -41,8 +58,8 @@ def build_summary() -> dict:
     # 每日每標籤聲量
     rows = conn.execute(
         "SELECT tag, pub_date, COUNT(*) AS n FROM articles "
-        "WHERE pub_date >= ? GROUP BY tag, pub_date",
-        (start,),
+        "WHERE pub_date >= ? AND pub_date <= ? GROUP BY tag, pub_date",
+        (start, end_s),
     ).fetchall()
     daily = {}
     for r in rows:
@@ -58,15 +75,17 @@ def build_summary() -> dict:
 
     # 情緒分布
     sent_rows = conn.execute(
-        "SELECT sentiment, COUNT(*) AS n FROM articles WHERE pub_date >= ? GROUP BY sentiment",
-        (start,),
+        "SELECT sentiment, COUNT(*) AS n FROM articles "
+        "WHERE pub_date >= ? AND pub_date <= ? GROUP BY sentiment",
+        (start, end_s),
     ).fetchall()
     sentiment = {r["sentiment"]: r["n"] for r in sent_rows}
 
     # 各標籤情緒
     tag_sent_rows = conn.execute(
-        "SELECT tag, sentiment, COUNT(*) AS n FROM articles WHERE pub_date >= ? GROUP BY tag, sentiment",
-        (start,),
+        "SELECT tag, sentiment, COUNT(*) AS n FROM articles "
+        "WHERE pub_date >= ? AND pub_date <= ? GROUP BY tag, sentiment",
+        (start, end_s),
     ).fetchall()
     tag_sentiment = {}
     for r in tag_sent_rows:
@@ -75,16 +94,17 @@ def build_summary() -> dict:
     # 主要媒體來源 Top 12
     source_rows = conn.execute(
         "SELECT source, COUNT(*) AS n FROM articles "
-        "WHERE pub_date >= ? AND source != '' GROUP BY source ORDER BY n DESC LIMIT 12",
-        (start,),
+        "WHERE pub_date >= ? AND pub_date <= ? AND source != '' "
+        "GROUP BY source ORDER BY n DESC LIMIT 12",
+        (start, end_s),
     ).fetchall()
     sources = [{"source": r["source"], "count": r["n"]} for r in source_rows]
 
     # 最新文章（近 200 則）
     art_rows = conn.execute(
         "SELECT tag, title, link, source, published, pub_date, sentiment FROM articles "
-        "WHERE pub_date >= ? ORDER BY published DESC LIMIT 200",
-        (start,),
+        "WHERE pub_date >= ? AND pub_date <= ? ORDER BY published DESC LIMIT 200",
+        (start, end_s),
     ).fetchall()
     articles = [dict(r) for r in art_rows]
 
@@ -276,7 +296,11 @@ class Handler(BaseHTTPRequestHandler):
             self._send(200, INDEX_PATH.read_bytes(), "text/html; charset=utf-8")
         elif self.path.startswith("/api/summary"):
             try:
-                self._send_json(build_summary())
+                q = urllib.parse.parse_qs(urllib.parse.urlparse(self.path).query)
+                self._send_json(build_summary(
+                    (q.get("start") or [None])[0],
+                    (q.get("end") or [None])[0],
+                ))
             except Exception as e:
                 self._send_json({"error": str(e)}, 500)
         elif self.path.startswith("/api/pr"):

@@ -49,10 +49,17 @@
   .chart-wrap { position: relative; height: 320px; }
   .chart-wrap.sm { height: 260px; }
   .toolbar { display: flex; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
-  select, input[type="search"] {
+  select, input[type="search"], input[type="date"] {
     background: var(--panel2); color: var(--text); border: 1px solid var(--border);
     border-radius: 8px; padding: 8px 12px; font-size: 14px;
   }
+  input[type="date"] { color-scheme: dark; font-family: inherit; }
+  .range-btn {
+    background: var(--accent); color: #fff; border: none; border-radius: 8px;
+    padding: 8px 16px; font-size: 14px; cursor: pointer; font-weight: 600; font-family: inherit;
+  }
+  .range-btn.ghost { background: var(--panel2); color: var(--muted); border: 1px solid var(--border); }
+  .range-btn.ghost:hover { color: var(--accent); border-color: var(--accent); }
   input[type="search"] { flex: 1; min-width: 200px; }
   table { width: 100%; border-collapse: collapse; font-size: 14px; }
   th, td { text-align: left; padding: 9px 10px; border-bottom: 1px solid var(--border); }
@@ -211,8 +218,16 @@
 </nav>
 
 <div id="tab-overview">
+<div class="toolbar" id="rangeBar" style="align-items:center">
+  <span class="muted" style="font-size:13px">📅 觀測區間</span>
+  <input type="date" id="startDate">
+  <span class="muted">~</span>
+  <input type="date" id="endDate">
+  <button class="range-btn" onclick="applyRange()">套用</button>
+  <button class="range-btn ghost" onclick="resetRange()">近 30 天</button>
+</div>
 <div class="kpis">
-  <div class="kpi"><div class="label">近 30 天總聲量</div><div class="value" id="kpiTotal">–</div></div>
+  <div class="kpi"><div class="label">區間總聲量</div><div class="value" id="kpiTotal">–</div></div>
   <div class="kpi"><div class="label">今日新聞則數</div><div class="value" id="kpiToday">–</div></div>
   <div class="kpi"><div class="label">近 7 天 vs 前 7 天</div><div class="value" id="kpiWeek">–</div><div class="sub" id="kpiWeekSub"></div></div>
   <div class="kpi"><div class="label">最熱議題標籤</div><div class="value" id="kpiTopTag" style="font-size:20px">–</div></div>
@@ -220,11 +235,11 @@
 
 <div class="grid">
   <div class="card">
-    <h2>📈 30 天每日聲量趨勢（點圖例可隱藏/顯示標籤）</h2>
+    <h2>📈 每日聲量趨勢（點圖例可隱藏/顯示標籤）</h2>
     <div class="chart-wrap"><canvas id="trendChart"></canvas></div>
   </div>
   <div class="card">
-    <h2>🏷️ 標籤聲量排行（30 天）</h2>
+    <h2>🏷️ 標籤聲量排行（區間內）</h2>
     <div class="chart-wrap"><canvas id="totalChart"></canvas></div>
   </div>
 </div>
@@ -385,9 +400,36 @@ function switchTab(name) {
 
 let STATIC_MODE = false;
 
+// 依日期選擇器組出 /api/summary 網址；沒選就用後端預設（近 30 天）
+function summaryURL() {
+  const s = document.getElementById('startDate').value;
+  const e = document.getElementById('endDate').value;
+  const p = new URLSearchParams();
+  if (s) p.set('start', s);
+  if (e) p.set('end', e);
+  const q = p.toString();
+  return '/api/summary' + (q ? '?' + q : '');
+}
+
+async function applyRange() {
+  try {
+    const res = await fetch(summaryURL());
+    DATA = await res.json();
+    render();
+  } catch (e) {
+    alert('載入失敗：' + e);
+  }
+}
+
+function resetRange() {
+  document.getElementById('startDate').value = '';
+  document.getElementById('endDate').value = '';
+  applyRange();
+}
+
 async function load() {
   try {
-    const [res, prRes, alRes] = await Promise.all([fetch('/api/summary'), fetch('/api/pr'), fetch('/api/alerts')]);
+    const [res, prRes, alRes] = await Promise.all([fetch(summaryURL()), fetch('/api/pr'), fetch('/api/alerts')]);
     if (!res.ok || !prRes.ok || !alRes.ok) throw new Error('no api');
     DATA = await res.json();
     PRDATA = await prRes.json();
@@ -400,6 +442,7 @@ async function load() {
     ALERTS = await alRes.json();
     STATIC_MODE = true;
     document.getElementById('refreshBtn').style.display = 'none';
+    document.getElementById('rangeBar').style.display = 'none';  // 靜態模式無法自訂區間
   }
   render();
   renderAlerts();
@@ -427,6 +470,10 @@ function render() {
   document.getElementById('kpiTopTag').textContent = d.kpi.top_tag;
   const lf = d.last_fetch ? d.last_fetch.run_at.replace('T',' ').slice(0,16) : '尚未抓取';
   document.getElementById('metaLine').textContent = `最後更新：${lf}｜觀測期間：${d.days[0]} ~ ${d.days[d.days.length-1]}`;
+
+  // 日期選擇器同步顯示目前實際的區間
+  document.getElementById('startDate').value = d.days[0];
+  document.getElementById('endDate').value = d.days[d.days.length - 1];
 
   // 資料過期警示：超過 24 小時未更新就提醒
   const banner = document.getElementById('staleBanner');
