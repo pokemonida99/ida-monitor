@@ -125,8 +125,10 @@ def extract_keywords(title: str):
         t = t.replace(q, " ")
     for w in STOPWORDS:
         t = t.replace(w, " ")
-    # 依非中英數字元切塊，保留長度 >= 3 的字塊（較有鑑別度）
-    chunks = [c for c in re.split(r"[^\w]+", t) if len(c) >= 3]
+    # 依非中英數字元切塊，保留長度 >= 3 的字塊（較有鑑別度）；
+    # 純日期字塊（2026年、7月…）沒有鑑別度，會撈回整個月的無關新聞
+    chunks = [c for c in re.split(r"[^\w]+", t)
+              if len(c) >= 3 and not re.fullmatch(r"\d+[年月日號]?", c)]
     chunks.sort(key=len, reverse=True)
     return quoted, chunks[:4]
 
@@ -192,7 +194,8 @@ def is_relevant(article_title: str, quoted, terms, pr_core: str) -> bool:
         return True
     pr_bg = _bigrams(pr_core)
     shared = len(pr_bg & _bigrams(article_title)) if pr_bg else 0
-    lcs = _lcs_len(core_flat, flat.lower())
+    # LCS 先剔除數字：年份日期（2026年、7月）人人都有，不能當特徵
+    lcs = _lcs_len(re.sub(r"\d+", "", core_flat), re.sub(r"\d+", "", flat.lower()))
     if lcs >= 5:
         return True
     if lcs >= 4 and shared >= 2:  # 較短的共同字串需雙字組佐證
@@ -332,10 +335,12 @@ def main() -> int:
 
     # 回補對象：仍在觀測期內（發布後 OBSERVE_DAYS 天）的新聞稿，
     # 加上 30 天內從未搜尋過的（首次執行時做一次性回補，Google News 約保留 30 天）
-    # --backfill：重搜 40 天內全部新聞稿（計數口徑改版後補回轉載報導用）
+    # --backfill：重搜 40 天內全部新聞稿並重建報導清單
+    # （先清掉舊結果再搜，判斷邏輯改版後可洗掉先前的誤判）
     cutoff = (today - timedelta(days=OBSERVE_DAYS)).strftime("%Y-%m-%d")
     month_ago = (today - timedelta(days=40)).strftime("%Y-%m-%d")
-    if "--backfill" in sys.argv:
+    backfill = "--backfill" in sys.argv
+    if backfill:
         active = conn.execute(
             "SELECT id, title, release_date FROM press_releases "
             "WHERE release_date >= ?", (month_ago,),
@@ -355,6 +360,8 @@ def main() -> int:
         except Exception as e:
             print(f"搜尋失敗 [{title[:20]}…]：{e}", file=sys.stderr)
             continue
+        if backfill:  # 搜尋成功才重建，避免搜掛時把舊資料清空
+            conn.execute("DELETE FROM pr_articles WHERE pr_id = ?", (pr_id,))
         existing = {
             (r[0], r[1]) for r in conn.execute(
                 "SELECT source, title FROM pr_articles WHERE pr_id = ?", (pr_id,)
