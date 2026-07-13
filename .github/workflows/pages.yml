@@ -5,6 +5,11 @@ on:
     # UTC 00/04/08/12 = 台北 08:00 / 12:00 / 16:00 / 20:00
     - cron: '0 0,4,8,12 * * *'
   workflow_dispatch:   # 也可在 Actions 頁面手動觸發
+    inputs:
+      backfill:
+        description: '重搜 40 天內全部新聞稿（計數口徑改版後補回轉載報導）'
+        type: boolean
+        default: false
   push:
     branches: [main]
 
@@ -36,6 +41,10 @@ jobs:
 
       - name: 抓取資料（聲量＋新聞稿擴散＋負面警訊）
         run: python3 fetch_news.py || echo "部分查詢失敗，以現有資料繼續"
+
+      - name: 回補舊新聞稿（手動觸發勾選 backfill 時）
+        if: inputs.backfill
+        run: python3 fetch_pr.py --backfill || echo "部分查詢失敗，以現有資料繼續"
 
       - name: 儲存資料庫
         if: always()
