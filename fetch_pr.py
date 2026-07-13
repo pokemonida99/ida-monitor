@@ -3,8 +3,10 @@
 """追蹤產業發展署新聞稿的媒體擴散狀況。
 
 1. 爬取產發署官網新聞稿列表（前兩頁，約 20 則）
-2. 對觀測期內（發布後 10 天）的新聞稿，用標題關鍵詞搜尋 Google News
-3. 記錄發布日 D0 ~ D+3 的相關報導，統計「多少媒體發了新聞」
+2. 對觀測期內（發布後 10 天）的新聞稿，用標題關鍵詞搜尋 Google News＋Bing News
+   （Google 會把同事件報導聚合、RSS 常漏轉載，雙引擎互補提高召回）
+3. 記錄發布日 D0 ~ D+10 的相關報導，統計報導則數、原始媒體數與平台數
+   （轉載平台 Yahoo、LINE TODAY、PChome 等各算一則報導，與同仁人工回報口徑一致）
 
 用法：python3 fetch_pr.py（fetch_news.py 執行完也會自動呼叫）
 """
@@ -26,9 +28,21 @@ TAIPEI_TZ = timezone(timedelta(hours=8))
 IDA_LIST_URL = "https://www.ida.gov.tw/ctlr?PRO=news.rwdNewsList&type=news&page={page}"
 IDA_BASE = "https://www.ida.gov.tw"
 RSS_URL = "https://news.google.com/rss/search?q={query}&hl=zh-TW&gl=TW&ceid=TW:zh-Hant"
+BING_RSS_URL = "https://www.bing.com/news/search?q={query}&format=RSS&setmkt=zh-TW"
+
+# Bing 結果只有網址，平台名由網域判斷（原始媒體交給 enrich 的 DOMAIN_MEDIA）
+PLATFORM_LABELS = {
+    "tw.news.yahoo.com": "Yahoo新聞",
+    "today.line.me": "LINE TODAY",
+    "news.pchome.com.tw": "PChome",
+    "msn.com": "MSN",
+    "match.net.tw": "match生活網",
+    "n.yam.com": "yam蕃薯藤",
+    "yamnews.yam.com": "yam蕃薯藤",
+}
 
 OBSERVE_DAYS = 10   # 新聞稿發布後持續回補報導的天數
-MAX_OFFSET = 3      # 統計 D0 ~ D+3
+MAX_OFFSET = 10     # 收錄 D0 ~ D+10（儀表板 D+4 以後彙總成一欄顯示）
 
 # 標題斷詞用的停用詞（機關名、無鑑別度用語）
 STOPWORDS = [
@@ -117,12 +131,49 @@ def extract_keywords(title: str):
     return quoted, chunks[:4]
 
 
+def _source_from_domain(domain: str) -> str:
+    """由網域推平台名（Bing 結果用）。查不到就直接用網域。"""
+    from enrich import DOMAIN_MEDIA
+    table = {**{d: n for d, n in DOMAIN_MEDIA.items() if n}, **PLATFORM_LABELS}
+    for d, name in sorted(table.items(), key=lambda kv: -len(kv[0])):
+        if domain == d or domain.endswith("." + d):
+            return name
+    return domain
+
+
+def _numbers(text: str):
+    """標題中的特徵數字（3 位數以上、非年份），千分位逗號移除。
+    如「9,249家」→ 9249，是記者改寫標題時最常保留的元素。"""
+    nums = set()
+    for n in re.findall(r"\d[\d,，]*", text):
+        n = re.sub(r"[,，]", "", n)
+        if len(n) >= 3 and not re.fullmatch(r"(19|20)\d{2}", n):
+            nums.add(n)
+    return nums
+
+
+def _lcs_len(a: str, b: str) -> int:
+    """最長連續共同子字串長度（計畫名／活動名比對用）。"""
+    best = 0
+    prev = [0] * (len(b) + 1)
+    for ch in a:
+        cur = [0] * (len(b) + 1)
+        for j, cb in enumerate(b, 1):
+            if ch == cb:
+                cur[j] = prev[j - 1] + 1
+                if cur[j] > best:
+                    best = cur[j]
+        prev = cur
+    return best
+
+
 def _bigrams(text: str):
     """取中文字元雙字組＋英文單字（記者改寫標題時仍會保留大量詞彙）。
+    英文詞 2 字母就收（AI、EV、IC 是產業新聞的關鍵詞）。
     數字不納入：年份、日期（2026、7月）在不相關新聞間太常見，會造成誤判。"""
     chars = re.sub(r"[^一-鿿]", "", text)
     grams = {chars[i:i + 2] for i in range(len(chars) - 1)}
-    grams |= {w.lower() for w in re.findall(r"[A-Za-z]{3,}", text)}
+    grams |= {w.lower() for w in re.findall(r"[A-Za-z]{2,}", text)}
     return grams
 
 
@@ -134,10 +185,20 @@ def is_relevant(article_title: str, quoted, terms, pr_core: str) -> bool:
         return True
     if sum(1 for c in terms if c in article_title) >= 2:
         return True
+    # 記者大幅改寫標題時，特徵數字（9,249家→9249）或計畫名等
+    # 連續共同字串（如「AI輔導團」）仍會保留
+    core_flat = re.sub(r"\s+", "", pr_core).lower()
+    if _numbers(core_flat) & _numbers(flat):
+        return True
     pr_bg = _bigrams(pr_core)
+    shared = len(pr_bg & _bigrams(article_title)) if pr_bg else 0
+    lcs = _lcs_len(core_flat, flat.lower())
+    if lcs >= 5:
+        return True
+    if lcs >= 4 and shared >= 2:  # 較短的共同字串需雙字組佐證
+        return True
     if not pr_bg:
         return False
-    shared = len(pr_bg & _bigrams(article_title))
     # 至少 6 組共同雙字組，或覆蓋新聞稿核心字 25%
     return shared >= max(6, int(len(pr_bg) * 0.25))
 
@@ -159,7 +220,9 @@ def build_queries(quoted, terms):
 
 
 def search_coverage(pr_title: str, release: date):
-    """搜尋新聞稿發布日到 D+3 的相關報導（多組查詢、合併去重）。"""
+    """搜尋新聞稿發布日前後的相關報導（雙引擎、多組查詢、合併去重）。
+    Google News 會把同事件報導聚合、RSS 常只回傳代表作，
+    Bing News 補上另一批來源（工商、經濟日報、商周、MSN…）。"""
     quoted, terms = extract_keywords(pr_title)
     queries = build_queries(quoted, terms)
     if not queries:
@@ -168,39 +231,81 @@ def search_coverage(pr_title: str, release: date):
     pr_core = pr_title
     for w in STOPWORDS:
         pr_core = pr_core.replace(w, "")
-    window = (f' after:{release.strftime("%Y-%m-%d")}'
+    window = (f' after:{(release - timedelta(days=1)).strftime("%Y-%m-%d")}'
               f' before:{(release + timedelta(days=MAX_OFFSET + 1)).strftime("%Y-%m-%d")}')
 
     out = {}
-    seen_titles = set()  # 同一篇報導常有多個連結（轉載），用 (來源, 標題) 去重
+    seen_titles = set()  # 同平台同標題只留一筆（跨引擎去重靠這組 key）
+    seen_bigrams = []    # [(source, title_bigrams)]：引擎間標題微差的近似去重
+
+    def consider(title, link, source, dt):
+        if not title or not link or link in out:
+            return
+        clean_title = re.sub(r"\s*-\s*[^-]+$", "", title) if " - " in title else title
+        if (source, clean_title) in seen_titles:
+            return
+        # 同來源、標題幾乎相同（兩引擎抓到同一篇但標題有一兩字差異）視為同篇
+        bg = _bigrams(clean_title)
+        for s, tbg in seen_bigrams:
+            if s == source and bg and tbg and \
+                    len(bg & tbg) / min(len(bg), len(tbg)) >= 0.85:
+                return
+        if not is_relevant(clean_title, quoted, terms, pr_core):
+            return
+        offset = (dt.date() - release).days
+        # 記者會提前見報或引擎回報 UTC 造成的 D-1，歸入 D0
+        if -1 <= offset <= MAX_OFFSET:
+            seen_titles.add((source, clean_title))
+            seen_bigrams.append((source, bg))
+            out[link] = (clean_title, link, source,
+                         dt.strftime("%Y-%m-%d"), max(offset, 0))
+
     for query in queries:
-        q = urllib.parse.quote(query + window)
-        req = urllib.request.Request(RSS_URL.format(query=q), headers=UA)
+        # Google News（支援 after:/before: 限縮時間）
         try:
+            q = urllib.parse.quote(query + window)
+            req = urllib.request.Request(RSS_URL.format(query=q), headers=UA)
             with urllib.request.urlopen(req, timeout=30) as resp:
                 root = ET.fromstring(resp.read())
+            for item in root.iter("item"):
+                source = (item.findtext("source") or "").strip()
+                if source.endswith("gov.tw"):  # 官網自載不算媒體報導
+                    continue
+                # Google 來源偶爾直接給網域（news.cnyes.com），轉成媒體名以利去重
+                if "." in source and re.fullmatch(r"[A-Za-z0-9.-]+", source):
+                    source = _source_from_domain(source.lower())
+                try:
+                    dt = parsedate_to_datetime(item.findtext("pubDate")).astimezone(TAIPEI_TZ)
+                except Exception:
+                    continue
+                consider((item.findtext("title") or "").strip(),
+                         (item.findtext("link") or "").strip(), source, dt)
         except Exception:
-            continue
-        for item in root.iter("item"):
-            title = (item.findtext("title") or "").strip()
-            link = (item.findtext("link") or "").strip()
-            source = (item.findtext("source") or "").strip()
-            pub = item.findtext("pubDate")
-            if not title or not link or link in out:
-                continue
-            clean_title = re.sub(r"\s*-\s*[^-]+$", "", title) if " - " in title else title
-            if (source, clean_title) in seen_titles:
-                continue
-            if not is_relevant(clean_title, quoted, terms, pr_core):
-                continue
-            seen_titles.add((source, clean_title))
-            try:
-                dt = parsedate_to_datetime(pub).astimezone(TAIPEI_TZ)
-            except Exception:
-                continue
-            offset = (dt.date() - release).days
-            if 0 <= offset <= MAX_OFFSET:
-                out[link] = (clean_title, link, source, dt.strftime("%Y-%m-%d"), offset)
+            pass
+        time.sleep(1)
+
+        # Bing News（無時間運算子，靠發布日過濾；連結已是原始網址）
+        try:
+            q = urllib.parse.quote(query)
+            req = urllib.request.Request(BING_RSS_URL.format(query=q), headers=UA)
+            with urllib.request.urlopen(req, timeout=30) as resp:
+                root = ET.fromstring(resp.read())
+            for item in root.iter("item"):
+                link = (item.findtext("link") or "").strip()
+                m = re.search(r"[?&]url=([^&]+)", link)
+                url = urllib.parse.unquote(m.group(1)) if m else link
+                domain = urllib.parse.urlparse(url).netloc.lower()
+                domain = domain[4:] if domain.startswith("www.") else domain
+                if not domain or domain.endswith("gov.tw"):
+                    continue
+                try:
+                    dt = parsedate_to_datetime(item.findtext("pubDate")).astimezone(TAIPEI_TZ)
+                except Exception:
+                    continue
+                consider((item.findtext("title") or "").strip(),
+                         url, _source_from_domain(domain), dt)
+        except Exception:
+            pass
         time.sleep(1)
     return list(out.values())
 
@@ -227,13 +332,20 @@ def main() -> int:
 
     # 回補對象：仍在觀測期內（發布後 OBSERVE_DAYS 天）的新聞稿，
     # 加上 30 天內從未搜尋過的（首次執行時做一次性回補，Google News 約保留 30 天）
+    # --backfill：重搜 40 天內全部新聞稿（計數口徑改版後補回轉載報導用）
     cutoff = (today - timedelta(days=OBSERVE_DAYS)).strftime("%Y-%m-%d")
     month_ago = (today - timedelta(days=40)).strftime("%Y-%m-%d")
-    active = conn.execute(
-        "SELECT id, title, release_date FROM press_releases "
-        "WHERE release_date >= ? OR (release_date >= ? AND last_checked IS NULL)",
-        (cutoff, month_ago),
-    ).fetchall()
+    if "--backfill" in sys.argv:
+        active = conn.execute(
+            "SELECT id, title, release_date FROM press_releases "
+            "WHERE release_date >= ?", (month_ago,),
+        ).fetchall()
+    else:
+        active = conn.execute(
+            "SELECT id, title, release_date FROM press_releases "
+            "WHERE release_date >= ? OR (release_date >= ? AND last_checked IS NULL)",
+            (cutoff, month_ago),
+        ).fetchall()
 
     new_count = 0
     for pr_id, title, rel_str in active:
@@ -284,10 +396,12 @@ def main() -> int:
         enriched += 1
         time.sleep(1)
 
-    # 同一篇報導（同媒體＋同標題）解析後可能發現重複，只留一筆
+    # 同一平台＋同標題的重複連結只留一筆；
+    # 不同平台的轉載（Yahoo、LINE TODAY、PChome…）視為獨立報導保留，
+    # 與人工回報「每個刊出平台各算一則」的口徑一致
     conn.execute(
         "DELETE FROM pr_articles WHERE id NOT IN ("
-        "SELECT MIN(id) FROM pr_articles GROUP BY pr_id, COALESCE(outlet, source), title)"
+        "SELECT MIN(id) FROM pr_articles GROUP BY pr_id, COALESCE(source, ''), title)"
     )
     conn.commit()
     conn.close()

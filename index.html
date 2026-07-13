@@ -281,7 +281,7 @@
   </div>
 
   <div class="card" style="margin-bottom:14px">
-    <h2>📤 新聞稿媒體擴散（發布日 D0 → 第三天 D+3 的報導數）</h2>
+    <h2>📤 新聞稿媒體擴散（發布日 D0 起 10 天內的報導數，含轉載平台）</h2>
     <div class="chart-wrap"><canvas id="prChart"></canvas></div>
   </div>
 
@@ -295,17 +295,21 @@
           <th class="offset-cell" style="width:56px">D+1</th>
           <th class="offset-cell" style="width:56px">D+2</th>
           <th class="offset-cell" style="width:56px">D+3</th>
+          <th class="offset-cell" style="width:56px">D+4~</th>
           <th class="offset-cell" style="width:70px">總報導</th>
           <th class="offset-cell" style="width:70px">媒體數</th>
+          <th class="offset-cell" style="width:70px">平台數</th>
           <th class="offset-cell" style="width:70px">記者數</th>
         </tr></thead>
         <tbody id="prBody"></tbody>
       </table>
     </div>
     <p class="muted" style="font-size:12px;margin-top:10px">
-      報導數為 Google News 中與新聞稿標題高度相關的新聞則數；媒體數以原始媒體（報社／通訊社）計算，
-      轉載平台（Yahoo、LINE TODAY 等）會標出原始出處；記者姓名從文章內文自動解析，部分文章無署名。
-      新聞稿發布後 10 天內每次排程都會回補，之後定格。
+      報導數為 Google News＋Bing News 中與新聞稿標題高度相關的新聞則數（雙引擎互補），同一篇報導在不同平台刊出（Yahoo、LINE TODAY、PChome 等轉載）各計 1 則，
+      並在明細標註「🔁 轉載」以區分原始出處與再次曝光；
+      媒體數以原始媒體（報社／通訊社）計算，平台數為刊出報導的新聞平台家數（含轉載平台）；
+      記者姓名從文章內文自動解析，部分文章無署名。
+      新聞稿發布後 10 天內（D0~D+10）每次排程都會回補，之後定格。
     </p>
   </div>
 </div><!-- /tab-pr -->
@@ -569,8 +573,8 @@ function render() {
 
 function destroy(k) { if (charts[k]) { charts[k].destroy(); delete charts[k]; } }
 
-const OFFSET_COLORS = ['#4e9af1', '#59a14f', '#edc948', '#8fa0bd'];
-const OFFSET_LABELS = ['D0 當天', 'D+1 隔天', 'D+2', 'D+3'];
+const OFFSET_COLORS = ['#4e9af1', '#59a14f', '#edc948', '#8fa0bd', '#b07aa1'];
+const OFFSET_LABELS = ['D0 當天', 'D+1 隔天', 'D+2', 'D+3', 'D+4 以後'];
 
 function renderPR() {
   const prs = PRDATA.press_releases;
@@ -581,7 +585,7 @@ function renderPR() {
   document.getElementById('prAvg').textContent = avg + ' 則';
   const top = [...recent].sort((a, b) => b.total - a.total)[0];
   document.getElementById('prTop').textContent = top && top.total > 0
-    ? `${top.title.slice(0, 24)}…（${top.total} 則／${top.media} 家媒體）` : '尚無資料';
+    ? `${top.title.slice(0, 24)}…（${top.total} 則／${top.media} 家媒體／${top.platforms ?? top.media} 個平台）` : '尚無資料';
 
   // 堆疊橫條圖：每則新聞稿的 D0~D+3 報導數
   const chartPrs = [...recent].reverse(); // 舊→新，由上而下讀
@@ -595,7 +599,7 @@ function renderPR() {
       }),
       datasets: OFFSET_LABELS.map((lab, i) => ({
         label: lab,
-        data: chartPrs.map(p => p.counts[i]),
+        data: chartPrs.map(p => p.counts[i] || 0),
         backgroundColor: OFFSET_COLORS[i],
         borderRadius: 3,
       }))
@@ -612,12 +616,15 @@ function renderPR() {
 
   // 表格＋展開明細
   document.getElementById('prBody').innerHTML = recent.map((p, idx) => {
-    const cells = p.counts.map(c =>
+    // 舊版資料只有 4 欄（無 D+4 以後），補 0 對齊
+    const counts5 = [0, 1, 2, 3, 4].map(i => p.counts[i] || 0);
+    const cells = counts5.map(c =>
       `<td class="offset-cell"><span class="offset-badge${c > 0 ? ' hot' : ''}">${c}</span></td>`).join('');
     const arts = p.articles.map(a => {
       // 媒體標示：原始媒體優先；若與轉載平台不同，並列顯示
       let mediaLabel = a.outlet || a.source || '－';
       if (a.outlet && a.source && a.outlet !== a.source) mediaLabel = `${a.outlet}<span class="muted">（${a.source}）</span>`;
+      if (a.repost) mediaLabel += '<span style="margin-left:6px;font-size:11px;padding:1px 6px;border-radius:8px;background:rgba(143,160,189,.18)" class="muted" title="同一篇稿件，於此平台再次曝光">🔁 轉載</span>';
       const rep = a.reporter ? `<span style="color:var(--pos)">✍ ${a.reporter}</span>` : '<span class="muted">記者不明</span>';
       return `
       <div class="pr-art">
@@ -636,10 +643,11 @@ function renderPR() {
         ${cells}
         <td class="offset-cell" style="font-weight:700">${p.total}</td>
         <td class="offset-cell" style="font-weight:700">${p.media}</td>
+        <td class="offset-cell" style="font-weight:700">${p.platforms ?? p.media}</td>
         <td class="offset-cell" style="font-weight:700;color:var(--pos)">${(p.reporters||[]).length}</td>
       </tr>
-      <tr class="pr-detail" id="prDetail${idx}" hidden><td colspan="9">${repSummary}${arts}</td></tr>`;
-  }).join('') || '<tr><td colspan="9" class="muted">尚無新聞稿資料</td></tr>';
+      <tr class="pr-detail" id="prDetail${idx}" hidden><td colspan="11">${repSummary}${arts}</td></tr>`;
+  }).join('') || '<tr><td colspan="11" class="muted">尚無新聞稿資料</td></tr>';
 }
 
 function togglePR(idx) {
@@ -898,14 +906,16 @@ function exportOverview() {
 }
 
 function exportPR() {
-  const rows = [['發布日', '新聞稿標題', 'D0', 'D+1', 'D+2', 'D+3', '總報導', '媒體數', '發稿記者', '報導日期', '原始媒體', '轉載平台', '記者', '報導標題', '報導連結']];
+  const rows = [['發布日', '新聞稿標題', 'D0', 'D+1', 'D+2', 'D+3', 'D+4以後', '總報導', '媒體數', '平台數', '發稿記者', '報導日期', '原始媒體', '刊出平台', '備註', '記者', '報導標題', '報導連結']];
   PRDATA.press_releases.forEach(p => {
+    const counts5 = [0, 1, 2, 3, 4].map(i => p.counts[i] || 0);
+    const head = [p.release_date, p.title, ...counts5, p.total, p.media, p.platforms ?? p.media, (p.reporters || []).join('、')];
     if (!p.articles.length) {
-      rows.push([p.release_date, p.title, ...p.counts, p.total, p.media, (p.reporters || []).join('、')]);
+      rows.push(head);
     }
     p.articles.forEach(a => rows.push([
-      p.release_date, p.title, ...p.counts, p.total, p.media, (p.reporters || []).join('、'),
-      a.pub_date, a.outlet || '', a.source || '', a.reporter || '', a.title, a.resolved_url || a.link,
+      ...head,
+      a.pub_date, a.outlet || '', a.source || '', a.repost ? '轉載（同稿多平台曝光）' : '', a.reporter || '', a.title, a.resolved_url || a.link,
     ]));
   });
   downloadCSV('新聞稿擴散', rows);

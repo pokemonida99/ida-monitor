@@ -40,6 +40,7 @@ DOMAIN_MEDIA = {
     "cw.com.tw": "天下雜誌",
     "bnext.com.tw": "數位時代",
     "technews.tw": "科技新報",
+    "ctimes.com.tw": "CTIMES",
     "digitimes.com.tw": "DIGITIMES",
     "moneydj.com": "MoneyDJ",
     "cnyes.com": "鉅亨網",
@@ -47,9 +48,12 @@ DOMAIN_MEDIA = {
     "taiwannews.com.tw": "Taiwan News",
     "rti.org.tw": "央廣",
     "taisounds.com": "太報",
+    "businessweekly.com.tw": "商業周刊",
+    "technice.com.tw": "科技島",
     "tw.news.yahoo.com": None,   # 轉載平台：要從頁面找原始媒體
     "today.line.me": None,
     "news.pchome.com.tw": None,
+    "msn.com": None,
     "match.net.tw": None,
     "yamnews.yam.com": None,
     "n.yam.com": None,
@@ -202,8 +206,9 @@ def enrich_article(gnews_url: str, rss_source: str):
     domain = _domain(url)
 
     outlet = None
-    for d, name in DOMAIN_MEDIA.items():
-        if domain == d or domain.endswith("." + d) or d.endswith(domain):
+    # 長網域優先，避免 money.udn.com（經濟日報）先撞到 udn.com（聯合報）
+    for d, name in sorted(DOMAIN_MEDIA.items(), key=lambda kv: -len(kv[0])):
+        if domain == d or domain.endswith("." + d):
             outlet = name
             break
 

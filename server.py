@@ -147,8 +147,25 @@ def build_summary(start=None, end=None) -> dict:
     }
 
 
+def _platform_of(source, fallback):
+    """刊出平台名稱：只合併同一平台的不同寫法（Yahoo奇摩新聞／Yahoo奇摩股市…），
+    不做跨品牌合併（聯合新聞網、經濟日報等各算一個平台）。"""
+    s = (source or fallback or "").strip()
+    if not s:
+        return None
+    low = s.lower()
+    if "yahoo" in low:
+        return "Yahoo新聞"
+    if "line" in low and "today" in low:
+        return "LINE TODAY"
+    if "pchome" in low:
+        return "PChome"
+    return s
+
+
 def build_pr_summary() -> dict:
-    """新聞稿擴散追蹤：每則新聞稿 D0~D+3 的報導數與媒體數。"""
+    """新聞稿擴散追蹤：每則新聞稿的報導數（D0~D+3 逐日、D+4 以後彙總）、
+    原始媒體數與刊出平台數（轉載平台各算一則報導）。"""
     conn = sqlite3.connect(DB_PATH)
     conn.row_factory = sqlite3.Row
     prs = conn.execute(
@@ -163,15 +180,36 @@ def build_pr_summary() -> dict:
             "WHERE pr_id = ? ORDER BY day_offset, outlet, source",
             (pr["id"],),
         ).fetchall()
-        counts = [0, 0, 0, 0]
-        media = set()
+        articles = [dict(a) for a in arts]
+        # 同一篇稿件（同原始媒體＋同標題）在多平台曝光：各計 1 則，
+        # 但非原始出處的標註 repost，儀表板與 CSV 會顯示「轉載」
+        stories = {}
+        for a in articles:
+            key = (a["outlet"] or a["source"] or "", "".join(a["title"].split()))
+            stories.setdefault(key, []).append(a)
+        for group in stories.values():
+            if len(group) < 2:
+                continue
+            original = next(
+                (g for g in group if (g["source"] or "") == (g["outlet"] or "")),
+                group[0],
+            )
+            for g in group:
+                g["repost"] = g is not original
+
+        counts = [0, 0, 0, 0, 0]  # D0, D+1, D+2, D+3, D+4以後
+        media = set()       # 原始媒體（報社／通訊社）
+        platforms = set()   # 刊出平台（含 Yahoo、LINE TODAY 等轉載平台）
         reporters = []
         for a in arts:
-            if 0 <= a["day_offset"] <= 3:
-                counts[a["day_offset"]] += 1
+            if a["day_offset"] is not None and a["day_offset"] >= 0:
+                counts[min(a["day_offset"], 4)] += 1
             m = a["outlet"] or a["source"]
             if m:
                 media.add(m)
+            p = _platform_of(a["source"], m)
+            if p:
+                platforms.add(p)
             if a["reporter"]:
                 for name in a["reporter"].split("、"):
                     if name not in reporters:
@@ -185,8 +223,9 @@ def build_pr_summary() -> dict:
             "counts": counts,
             "total": len(arts),
             "media": len(media),
+            "platforms": len(platforms),
             "reporters": reporters,
-            "articles": [dict(a) for a in arts],
+            "articles": articles,
         })
     conn.close()
     return {
